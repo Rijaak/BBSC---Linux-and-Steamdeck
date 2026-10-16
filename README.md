@@ -25,7 +25,7 @@ Dream - up to five hunters, each keeping their own character.
 ## Requirements
 
 - Your own Bloodborne **CUSA03173, version 01.09** - no game files are included
-- Windows (the server also runs on Linux)
+- Windows, or Linux / Steam Deck with the native emulator build from this fork (see **Linux** below; the server also runs on Linux)
 
 ## Downloads
 
@@ -52,6 +52,48 @@ Dream - up to five hunters, each keeping their own character.
 | `server/` | Host package scripts and the BBSC game server (`bbsc_gameserver.py`) |
 | `tools/` | Game data readers and helper tools |
 | `docs/` | Architecture, world sync, networking, known limitations, changelog |
+
+## Linux / Steam Deck (this fork)
+
+This fork adds a native Linux build of the BBSC emulator (`emulator/`, shadPS4 v0.17.1 base with
+BBSC built in). The Windows package does not work under Proton/Wine: the game stalls in a loading loop
+before the first logo, and the plain shadPS4 v0.17.0 Windows build does the same, so it is a Wine
+issue rather than BBSC. The same code compiled natively runs fine.
+
+What you get is the emulator only. The Windows launcher is not ported; the game is started from the
+command line and BBSC's options are set with environment variables (same names as in `mod.json`).
+
+**Run** (release tarball, or your own build):
+
+```bash
+./run-bbsc.sh /path/to/CUSA03173/eboot.bin
+```
+
+It uses the normal shadPS4 data folder (`~/.local/share/shadPS4`: saves, `sys_modules`, `patches`,
+`config.json`), so an existing shadPS4 setup is used as it is. To keep BBSC separate, create a `user`
+folder next to the executable and it will be used instead.
+
+Needs glibc 2.38+ (SteamOS 3.6+ is fine) and Vulkan. `libstdc++` is bundled in the tarball.
+
+**Build** (Clang 18 recommended; GCC 14's libstdc++ or newer is required for `std::ranges::to`):
+
+```bash
+git clone --recursive https://github.com/<you>/BBSC
+cd BBSC/emulator
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+      -DENABLE_QT_GUI=OFF -DENABLE_DISCORD_RPC=OFF -DENABLE_UPDATER=OFF
+ninja -C build shadps4
+```
+
+Debian/Ubuntu packages: the list in `emulator/documents/building-linux.md` plus
+`libxtst-dev libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev libdecor-0-dev libusb-1.0-0-dev`.
+The `mesa-kosmickrisp` submodule is macOS-only and can be skipped. The `fdk-aac` submodule points at
+the GitHub mirror of the Android AAC decoder (same code; `cpp/` layout).
+
+Linux changes in this fork: BBSC save-folder lookup uses the emulator's user dir on non-Windows
+(`src/core/bloodborne_re.cpp`), a missing `<optional>` include, a stray `constexpr`, and the
+`fdk-aac` paths. Everything else is upstream BBSC 0.0.1.
 
 ## Building
 
