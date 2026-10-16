@@ -99,6 +99,14 @@ host's address). A server card (`*.json` with `shadnet` and `registration_key`) 
 BBSC's own options (five hunters, scaling, no fog walls, ...) are environment variables with the
 names from `mod.json` (`BBSC_MOD_SEAMLESS`, `BBSC_MOD_HOOKS`, `SHADPS4_BBSC_*`); all default to on.
 
+Notes:
+- Running another shadPS4 build (e.g. the EmuDeck one) on the same data folder resets
+  `connected_to_network` / `shad_net_enabled` / `shadnet_server` on exit. Run `bbsc-setup.py` again
+  afterwards (it is idempotent), or keep BBSC on its own `user` folder.
+- The 1280x800 (16:10) resolution patch fills the screen in gameplay; the title screen and other
+  full-screen 2D art stay 16:9 with grey bars by design.
+- An occasional `std::bad_alloc` on launch is known; relaunching works.
+
 To check the connection: `grep -a -i -E 'shadnet|login|ss.info' ~/.local/share/shadPS4/log/shad_log.txt`.
 A working run logs the shadNet login for your account and a `200` reply for `/bb-eu/ss.info`.
 
