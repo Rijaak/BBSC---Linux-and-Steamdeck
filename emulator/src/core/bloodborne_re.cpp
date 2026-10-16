@@ -5917,6 +5917,15 @@ std::optional<BbscSaveSlot> BbscActiveSaveSlotUnchecked() {
         }
     }
     ec.clear();
+#else
+    // Linux/macOS build: the emulator's own user folder (~/.local/share/shadPS4 or the
+    // portable <working folder>/user), as resolved by path_util.
+    if (!fs::is_directory(bases.front() / "home", ec) &&
+        !fs::is_directory(bases.front() / "savedata", ec)) {
+        bases.clear();
+        bases.push_back(Common::FS::GetUserPath(Common::FS::PathType::UserDir));
+    }
+    ec.clear();
 #endif
     std::optional<BbscSaveSlot> best;
     fs::file_time_type best_time = bbsc_run_started;
@@ -14403,6 +14412,8 @@ bool BackupBbscSavesUnchecked() {
     if (const char* appdata = std::getenv("APPDATA")) {
         bases.push_back(fs::path(appdata) / "shadPS4");
     }
+#else
+    bases.push_back(Common::FS::GetUserPath(Common::FS::PathType::UserDir));
 #endif
     const auto stamp = std::chrono::system_clock::now().time_since_epoch();
     const fs::path out = Common::FS::GetUserPath(Common::FS::PathType::CapturesDir).parent_path() /
