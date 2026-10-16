@@ -73,6 +73,35 @@ It uses the normal shadPS4 data folder (`~/.local/share/shadPS4`: saves, `sys_mo
 `config.json`), so an existing shadPS4 setup is used as it is. To keep BBSC separate, create a `user`
 folder next to the executable and it will be used instead.
 
+**Going online.** The Windows launcher's Accounts tab and the `first-start` / `join-host` scripts are
+not ported; `emulator/scripts/bbsc-setup.py` (also in the tarball) does the same from a terminal:
+
+```bash
+# 1. create your account on the community server (Seamless Hunt: https://seamlesshunt.com/),
+#    or let the script create it on a server that allows it (drop --no-register, add --card or --key)
+# 2. write account + server into the emulator's files
+python3 bbsc-setup.py --server play.seamlesshunt.com:31313 --no-register --name YourName --password YourPassword
+# 3. start the game and pick "Connect to network"
+```
+
+What it writes, if you would rather do it by hand (all in the data folder):
+
+| File | Change |
+|---|---|
+| `users.json` | in `Users.user`, on the entry with `player_index: 1` (user 1000): `shadnet_enabled: true`, `shadnet_npid`, `shadnet_password`, `shadnet_email` |
+| `config.json` | in `General`: `shadnet_server: "host:31313"`, `shadnet_webapi_server: "http://host:31315"`, `shad_net_enabled: true`, `connected_to_network: true` |
+| `host_overrides.json` | `{"https://ss4.scej-network.jp:20443": "http://host:20443", "http://thehuntersdream.com:18671/summon_messenger": "http://host:31315"}` — without this the game asks Sony's dead server for its server list and reports "Failed to acquire network server information" |
+
+Replace `host` with the community server (`play.seamlesshunt.com` for Seamless Hunt, or your own
+host's address). A server card (`*.json` with `shadnet` and `registration_key`) can be passed with
+`--card` instead of `--server`.
+
+BBSC's own options (five hunters, scaling, no fog walls, ...) are environment variables with the
+names from `mod.json` (`BBSC_MOD_SEAMLESS`, `BBSC_MOD_HOOKS`, `SHADPS4_BBSC_*`); all default to on.
+
+To check the connection: `grep -a -i -E 'shadnet|login|ss.info' ~/.local/share/shadPS4/log/shad_log.txt`.
+A working run logs the shadNet login for your account and a `200` reply for `/bb-eu/ss.info`.
+
 Needs glibc 2.38+ (SteamOS 3.6+ is fine) and Vulkan. `libstdc++` is bundled in the tarball.
 
 **Build** (Clang 18 recommended; GCC 14's libstdc++ or newer is required for `std::ranges::to`):

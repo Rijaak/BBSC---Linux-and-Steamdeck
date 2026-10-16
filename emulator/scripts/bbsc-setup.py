@@ -10,7 +10,8 @@ What it does:
   1. creates the account on the shadNet server (same wire protocol as the launcher), unless --no-register
   2. writes the account into <user>/users.json (first user, or --user-id N)
   3. sets shadnet_server / webapi, shad_net_enabled and connected_to_network in <user>/config.json
-  4. copies the card into <user>/servers/
+  4. writes <user>/host_overrides.json so the game's server list and summons go to the community server
+  5. copies the card into <user>/servers/
 
 <user> is ~/.local/share/shadPS4, or ./user next to this script if that folder exists (portable).
 """
@@ -88,6 +89,7 @@ def main():
     ap.add_argument("--email", default="", help="default: <name>@shadnet.local")
     ap.add_argument("--user-id", type=int, help="shadPS4 local user id to attach the account to (default: first)")
     ap.add_argument("--no-register", action="store_true", help="skip account creation (already exists)")
+    ap.add_argument("--game-server", help="host serving the game API (ss.info on :20443, summons on :31315); default: the shadNet host")
     a = ap.parse_args()
 
     here = pathlib.Path(__file__).resolve().parent
@@ -139,6 +141,16 @@ def main():
                 "shad_net_enabled": True, "connected_to_network": True})
     json.dump(cfg, open(cp, "w"), indent=4)
     print(f"config.json: server {server}, network on")
+
+    # host_overrides.json: the game's own server list (Sony's dead ss4.scej-network.jp) and the
+    # summon service are redirected to the community game server, as the Windows join-host script does.
+    gs = a.game_server or host
+    ov = user_dir / "host_overrides.json"
+    overrides = json.load(open(ov)) if ov.exists() else {}
+    overrides["https://ss4.scej-network.jp:20443"] = f"http://{gs}:20443"
+    overrides["http://thehuntersdream.com:18671/summon_messenger"] = f"http://{gs}:31315"
+    json.dump(overrides, open(ov, "w"), indent=2)
+    print(f"host_overrides.json: game API -> {gs}")
     print("Done. Start the game and choose 'Connect to network'.")
 
 if __name__ == "__main__":
