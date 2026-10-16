@@ -107,7 +107,7 @@
 	url = https://github.com/richgel999/miniz
 [submodule "emulator/externals/aacdec/fdk-aac"]
 	path = emulator/externals/aacdec/fdk-aac
-	url = https://android.googlesource.com/platform/external/aac
+	url = https://github.com/mstorsjo/fdk-aac.git
 [submodule "emulator/externals/freetype"]
 	path = emulator/externals/freetype
 	url = https://github.com/freetype/freetype.git
