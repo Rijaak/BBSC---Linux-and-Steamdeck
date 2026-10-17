@@ -112,6 +112,10 @@ A working run logs the shadNet login for your account and a `200` reply for `/bb
 
 Needs glibc 2.38+ (SteamOS 3.6+ is fine) and Vulkan. `libstdc++` is bundled in the tarball.
 
+No game files or PS4 firmware are included, here or in the release tarball: you need your own
+Bloodborne CUSA03173 v01.09 dump, and `libSceNgs2.sprx` in `sys_modules` if your setup needs it, as
+with any shadPS4 install.
+
 **Build** (Clang 18 recommended; GCC 14's libstdc++ or newer is required for `std::ranges::to`):
 
 ```bash
