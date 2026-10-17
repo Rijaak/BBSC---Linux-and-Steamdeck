@@ -80,6 +80,7 @@ not ported; `emulator/scripts/bbsc-setup.py` (also in the tarball) does the same
 # 1. create your account on the community server (Seamless Hunt: https://seamlesshunt.com/),
 #    or let the script create it on a server that allows it (drop --no-register, add --card or --key)
 # 2. write account + server into the emulator's files
+# replace YourName / YourPassword with the account you created on https://seamlesshunt.com/
 python3 bbsc-setup.py --server play.seamlesshunt.com:31313 --no-register --name YourName --password YourPassword
 # 3. start the game and pick "Connect to network"
 ```
@@ -115,6 +116,43 @@ Needs glibc 2.38+ (SteamOS 3.6+ is fine) and Vulkan. `libstdc++` is bundled in t
 No game files or PS4 firmware are included, here or in the release tarball: you need your own
 Bloodborne CUSA03173 v01.09 dump, and `libSceNgs2.sprx` in `sys_modules` if your setup needs it, as
 with any shadPS4 install.
+
+### Steam Deck settings
+
+Tested on a Steam Deck LCD: a steady 30 FPS at 1280x800 (GPU around 85%) with these shadPS4 patches on
+(`~/.local/share/shadPS4/patches/shadPS4/Bloodborne.xml`, `isEnabled="true"` on the patch's
+`<Metadata>` line, or tick them in the shadPS4 Qt launcher):
+
+- 30 FPS++
+- Resolution Patch 1280x800 (16:10)
+- 1280x800 Light Grid For SteamDeck
+- Disable Motion Blur
+- Disable Chromatic Aberration
+- Disable DoF
+
+One-liner that enables exactly those six:
+
+```bash
+cd ~/.local/share/shadPS4/patches/shadPS4
+for p in '30 FPS++' 'Resolution Patch 1280x800' '1280x800 Light Grid' \
+         'Disable Motion Blur' 'Disable Chromatic Aberration' 'Disable DoF'; do
+  N=$(grep -n "Name=\"$p" Bloodborne.xml | head -1 | cut -d: -f1)
+  sed -i "${N}s/isEnabled=\"false\"/isEnabled=\"true\"/" Bloodborne.xml
+done
+grep -n 'isEnabled="true"' Bloodborne.xml | grep -o 'Name="[^"]*"'
+```
+
+If it still dips: **Disable Dynamic Light Shadows** saves about 7% GPU (78% vs 85%) at a visible cost,
+then **Disable SSAO**. Not recommended: **rgba8f color space** (large colored light-volume artifacts).
+
+`config.json`: `GPU.vblank_frequency: 30` (the emulator's frame cap; with the default 60 the counter
+drifts above 30 even with the patch), `GPU.full_screen: true`,
+`Vulkan.pipeline_cache_enabled: true` (off by default; without it shaders recompile every launch and
+turning the camera stutters for the first minutes of every session). Expect shader-compile hitches
+on the first pass through each area; they fade as the cache fills.
+
+Steam Deck side: leave the Quick Access frame limiter off (two 30 FPS limiters fight and produce
+drops to 15), TDP limit off.
 
 **Build** (Clang 18 recommended; GCC 14's libstdc++ or newer is required for `std::ranges::to`):
 
