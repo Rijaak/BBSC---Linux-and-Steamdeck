@@ -119,31 +119,45 @@ with any shadPS4 install.
 
 ### Steam Deck settings
 
-Tested on a Steam Deck LCD: a steady 30 FPS at 1280x800 (GPU around 85%) with these shadPS4 patches on
-(`~/.local/share/shadPS4/patches/shadPS4/Bloodborne.xml`, `isEnabled="true"` on the patch's
+Tested on a Steam Deck LCD: a steady 30 FPS at 1280x800 (GPU around 75-85%) with these shadPS4 patches
+on (`~/.local/share/shadPS4/patches/shadPS4/Bloodborne.xml`, `isEnabled="true"` on the patch's
 `<Metadata>` line, or tick them in the shadPS4 Qt launcher):
 
 - 30 FPS++
 - Resolution Patch 1280x800 (16:10)
 - 1280x800 Light Grid For SteamDeck
+- Better AA
 - Disable Motion Blur
 - Disable Chromatic Aberration
 - Disable DoF
+- Disable Dynamic Light Shadows
 
-One-liner that enables exactly those six:
+Leave **SSAO on** (do *not* enable the "Disable SSAO" patch): it is a screen-space effect that shadPS4
+renders correctly and it adds contact shadows and depth for almost no cost. Disable it only if you ever
+see dark grain or haloing.
+
+**"Disable Dynamic Light Shadows" must stay on.** shadPS4 does not project Bloodborne's dynamic light
+shadows correctly - with them rendering you get large coloured triangular light-volume artifacts
+(wedges) across the screen. This is an emulator rendering bug, not a performance trade-off; enabling the
+patch removes the wedges (and saves about 7% GPU as a side benefit).
+
+One-liner that enables exactly those eight:
 
 ```bash
 cd ~/.local/share/shadPS4/patches/shadPS4
-for p in '30 FPS++' 'Resolution Patch 1280x800' '1280x800 Light Grid' \
-         'Disable Motion Blur' 'Disable Chromatic Aberration' 'Disable DoF'; do
+for p in '30 FPS++' 'Resolution Patch 1280x800' '1280x800 Light Grid' 'Better AA' \
+         'Disable Motion Blur' 'Disable Chromatic Aberration' 'Disable DoF' \
+         'Disable Dynamic Light Shadows'; do
   N=$(grep -n "Name=\"$p" Bloodborne.xml | head -1 | cut -d: -f1)
   sed -i "${N}s/isEnabled=\"false\"/isEnabled=\"true\"/" Bloodborne.xml
 done
 grep -n 'isEnabled="true"' Bloodborne.xml | grep -o 'Name="[^"]*"'
 ```
 
-If it still dips: **Disable Dynamic Light Shadows** saves about 7% GPU (78% vs 85%) at a visible cost,
-then **Disable SSAO**. Not recommended: **rgba8f color space** (large colored light-volume artifacts).
+Not recommended: **rgba8f color space** (large colored light-volume artifacts). Community graphics mods
+(e.g. the BB PC Remaster texture pack) are GPU-bound on the Deck - they fall into the 17-25 FPS range
+and cannot hold 30 at native resolution, so they are not worth running here; the patch set above is the
+best-looking config that stays locked at 30.
 
 `config.json`: `GPU.vblank_frequency: 30` (the emulator's frame cap; with the default 60 the counter
 drifts above 30 even with the patch), `GPU.full_screen: true`,
