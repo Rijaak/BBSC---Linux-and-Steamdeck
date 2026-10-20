@@ -17725,27 +17725,39 @@ void InstallReverseEngineeringTrace() {
         return;
     }
 
-    const auto capture_dir =
-        Common::FS::GetUserPath(Common::FS::PathType::CapturesDir) / "bloodborne-re";
-    std::error_code error;
-    std::filesystem::create_directories(capture_dir, error);
-    if (error) {
-        LOG_ERROR(Debug, "Could not create Bloodborne RE capture directory {}: {}",
-                  Common::FS::PathToUTF8String(capture_dir), error.message());
-        return;
-    }
-
-    const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               std::chrono::system_clock::now().time_since_epoch())
-                               .count();
+    // The co-op hooks installed below always run. The per-event JSONL capture is a
+    // reverse-engineering instrument, not something a player needs: with it on, every
+    // traced co-op event writes and fsyncs a record - heavy disk I/O during play, and the
+    // real cost behind the old "disable SHADPS4_BLOODBORNE_RE_TRACE" workaround (which also
+    // tore out the co-op hooks). The capture is now opt-in via SHADPS4_BBSC_CAPTURE
+    // (default off). When off, capture_file stays closed: the header write below and every
+    // TraceEntry write become no-ops, while the hooks install and behave exactly as before.
+    // A failed capture open is likewise non-fatal - the hooks still install.
+    const bool capture_enabled = EnvFlagEnabled("SHADPS4_BBSC_CAPTURE");
     const int process_id = Debugger::GetCurrentPid();
-    capture_path = capture_dir / ("cusa03173-109-p" + std::to_string(process_id) + '-' +
-                                  std::to_string(timestamp) + ".jsonl");
-    capture_file.open(capture_path, std::ios::out | std::ios::trunc);
-    if (!capture_file) {
-        LOG_ERROR(Debug, "Could not open Bloodborne RE capture {}",
-                  Common::FS::PathToUTF8String(capture_path));
-        return;
+    if (capture_enabled) {
+        const auto capture_dir =
+            Common::FS::GetUserPath(Common::FS::PathType::CapturesDir) / "bloodborne-re";
+        std::error_code error;
+        std::filesystem::create_directories(capture_dir, error);
+        if (error) {
+            LOG_ERROR(Debug,
+                      "Could not create Bloodborne RE capture directory {}: {} - "
+                      "continuing without capture",
+                      Common::FS::PathToUTF8String(capture_dir), error.message());
+        } else {
+            const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::system_clock::now().time_since_epoch())
+                                       .count();
+            capture_path = capture_dir / ("cusa03173-109-p" + std::to_string(process_id) + '-' +
+                                          std::to_string(timestamp) + ".jsonl");
+            capture_file.open(capture_path, std::ios::out | std::ios::trunc);
+            if (!capture_file) {
+                LOG_ERROR(Debug,
+                          "Could not open Bloodborne RE capture {} - continuing without capture",
+                          Common::FS::PathToUTF8String(capture_path));
+            }
+        }
     }
     capture_file << "{\"type\":\"header\",\"title\":\"CUSA03173\","
                     "\"app_version\":\"01.09\",\"image_base\":\"0x"

@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-10-20 - Linux fork: co-op hooks decoupled from the RE capture (SHADPS4_BBSC_CAPTURE)
+
+- `SHADPS4_BLOODBORNE_RE_TRACE` was effectively a hidden master switch. In the built-in build
+  (`BBSC_VANILLA` OFF, `BuiltIn` true) it installs the whole BBSC co-op hook set - death/respawn,
+  summon reload, cross-map handoff, healing-fountain, the bell/area memory patches - AND the per-event
+  JSONL reverse-engineering capture, both welded together in `InstallReverseEngineeringTrace`. Turning it
+  off to quiet the logging (a reasonable "it's just a trace" assumption) silently tears out co-op:
+  deaths stop resetting to the lamp (you stare at your corpse) and the game drops its network session.
+- That capture writes and `flush()`es a record for every traced co-op event. On a Steam Deck the
+  per-event disk flush is a real source of in-play stutter and load-time hitching. It is a developer
+  instrument, not something a player needs running.
+- Fix (`src/core/bloodborne_re.cpp`, `InstallReverseEngineeringTrace`): the co-op hooks now always
+  install (still gated only by `RE_TRACE`, default on). The capture directory creation, file open and
+  header write are gated behind a new `SHADPS4_BBSC_CAPTURE` switch - **default off** - and a failed
+  open is now non-fatal instead of aborting the whole install. `TraceEntry` already returns before any
+  write when `capture_file` is closed, so with capture off there is zero capture disk I/O and the hooks
+  behave exactly as before. Set `SHADPS4_BBSC_CAPTURE=1` to record captures for RE work.
+- Net effect on the Deck build: co-op, death/respawn and the online session work out of the box with no
+  per-event capture flushing, and the `captures/bloodborne-re` -> `/dev/shm` RAM-disk symlink used as a
+  stopgap is no longer needed. Do **not** set `SHADPS4_BLOODBORNE_RE_TRACE=0` to reduce logging - it
+  disables co-op; use `SHADPS4_BBSC_CAPTURE` (off by default) to control the capture instead.
+
 ## 2026-10-04 (c) - mod 11: Silencing Blank ends the co-op cleanly; Memory Altar for the guest
 
 - New tool: tools\gamedata\lua50.py - reads the game's compiled Lua (Lua 5.0 with one extra empty list
