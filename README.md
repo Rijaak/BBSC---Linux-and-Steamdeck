@@ -136,10 +136,10 @@ Leave **SSAO on** (do *not* enable the "Disable SSAO" patch): it is a screen-spa
 renders correctly and it adds contact shadows and depth for almost no cost. Disable it only if you ever
 see dark grain or haloing.
 
-**"Disable Dynamic Light Shadows" must stay on.** shadPS4 does not project Bloodborne's dynamic light
-shadows correctly - with them rendering you get large coloured triangular light-volume artifacts
-(wedges) across the screen. This is an emulator rendering bug, not a performance trade-off; enabling the
-patch removes the wedges (and saves about 7% GPU as a side benefit).
+**Keep "Disable Dynamic Light Shadows" on.** shadPS4 renders Bloodborne's dynamic light shadows
+incorrectly and they also cost GPU, so the patch both tidies the lighting and saves about 7% GPU.
+(The large triangular "wedge" artifacts some players hit on death or an area reload are a *separate*
+problem - GPU vertex explosions - fixed by `GPU.readbacks_mode` below, not by this patch.)
 
 One-liner that enables exactly those eight:
 
@@ -159,11 +159,18 @@ Not recommended: **rgba8f color space** (large colored light-volume artifacts). 
 and cannot hold 30 at native resolution, so they are not worth running here; the patch set above is the
 best-looking config that stays locked at 30.
 
-`config.json`: `GPU.vblank_frequency: 30` (the emulator's frame cap; with the default 60 the counter
-drifts above 30 even with the patch), `GPU.full_screen: true`,
-`Vulkan.pipeline_cache_enabled: true` (off by default; without it shaders recompile every launch and
-turning the camera stutters for the first minutes of every session). Expect shader-compile hitches
-on the first pass through each area; they fade as the cache fills.
+`config.json` keys:
+
+- `GPU.readbacks_mode: 1` (Relaxed) - **required for Bloodborne.** Without GPU readbacks the game throws
+  "vertex explosions": huge coloured triangles across the screen, most often right after a death or an
+  area reload. `1` fixes them with the least overhead; `2` (Precise) is heavier; `0` (off) brings them back.
+- `GPU.vblank_frequency: 30` - the emulator's frame cap; with the default 60 the counter drifts above 30
+  even with the 30 FPS++ patch.
+- `GPU.full_screen: true`
+- `Vulkan.pipeline_cache_enabled: true` - off by default; without it shaders recompile every launch and
+  turning the camera stutters for the first minutes of every session.
+
+Expect shader-compile hitches on the first pass through each area; they fade as the cache fills.
 
 Steam Deck side: leave the Quick Access frame limiter off (two 30 FPS limiters fight and produce
 drops to 15), TDP limit off.
