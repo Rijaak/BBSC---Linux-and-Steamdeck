@@ -13636,12 +13636,18 @@ std::vector<u64> FindBbscParamTables(std::string_view type, u16 min_rows = 1000,
     std::vector<u8> needle(type.begin(), type.end());
     needle.push_back(0);
     std::vector<u64> tables;
-    for (const u64 hit : Core::Bbsc::FindInMemory(needle, BbscScanLow(), 0x10000000000ULL, 16)) {
+    const auto hits = Core::Bbsc::FindInMemory(needle, BbscScanLow(), 0x10000000000ULL, 16);
+    for (const u64 hit : hits) {
         const u64 table = hit - 0x0C;
         if (ReadValue<u16>(table, 0x0A) > min_rows && ReadValue<u32>(table, 0x40) == first_id) {
             tables.push_back(table);
         }
     }
+    LOG_INFO(Debug,
+             "FindBbscParamTables: BBSC param scan [{}]: {} raw hit(s) -> {} table(s), {} rejected "
+             "(scan_low={:#x}, image_base={:#x})",
+             type, hits.size(), tables.size(), hits.size() - tables.size(), BbscScanLow(),
+             image_base);
     if (stable && !tables.empty()) {
         stable_cache.emplace(key, tables);
     }
