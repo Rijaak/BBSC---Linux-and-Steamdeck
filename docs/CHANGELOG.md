@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-10-21 - Linux fork: implement the guest-memory param scan on Linux (fixes the item kit)
+
+- Symptom: on the Linux build the BBSC item kit was never granted - no Hunt Bell, Kin Bell, Duel Bell
+  or Bloodlust Bell in the inventory, and the vanilla bells (Beckoning Bell, Small Resonant Bell,
+  Silencing Blank) were left active but relabeled "no longer used." A diagnostic build showed the param
+  scan returning `0 raw hit(s)` for every param type (`EQUIP_PARAM_GOODS_ST`, `SP_EFFECT_PARAM_ST`,
+  `NPC_PARAM_ST`), identically on every call regardless of `scan_low`/`image_base`.
+- Root cause (`src/core/bbsc_memscan.cpp`, `Core::Bbsc::FindInMemory`): the entire function body was
+  wrapped in `#ifdef _WIN32` with no `#else`. On Linux it compiled to `return {};` - an empty result -
+  so `FindBbscParamTables` found no tables, `PrepareBbscKitRows` never ran, and the kit grant and the
+  vanilla-bell disable in `PrepareBbscDuelBell` never fired. `BbscScanLow()`/`image_base` were red
+  herrings: the loop that consumes them only existed in the Windows branch.
+- Fix: added the Linux implementation - enumerate mapped regions from `/proc/self/maps`, scan the
+  readable ones overlapping `[lo, hi)` with the same `memchr`/`memcmp` search the Windows path uses
+  (`SearchRegion`, now compiled on both platforms; the Windows SEH guard is replaced on Linux by the
+  fact that only maps-readable regions are scanned and shadPS4's own SIGSEGV handler backstops its
+  GPU-tracked pages). No behavior change on Windows.
+
 ## 2026-10-20 - Linux fork: co-op hooks decoupled from the RE capture (SHADPS4_BBSC_CAPTURE)
 
 - `SHADPS4_BLOODBORNE_RE_TRACE` was effectively a hidden master switch. In the built-in build
