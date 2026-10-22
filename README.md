@@ -100,6 +100,55 @@ Login errors: **6** (already logged in) is a stale session after a crash - wait 
 no second instance is running (`pkill -9 -f shadps4-bbsc`), retry. **8** is a wrong password - rerun
 the setup with the right one.
 
+## Playing with Windows / BBport friends
+
+Cross-play works (tested: Steam Deck on 0.0.2.1 ↔ BBport on Windows). Three things have to line up, and every failed session so far has been one of them:
+
+1. **Same BBSC version.** Everyone on 0.0.2 (see the version table at the top).
+
+2. **Same server, in every field.** Both players on SeamlessHunt. On the Linux side `bbsc-setup.py` does this for you. On the BBport side it's three fields on the *Online co-op* settings page, and they are **not** all the same value:
+
+   | BBport field | Value |
+   |---|---|
+   
+   | Play online | on |
+   
+   | Play with | shadNet server |
+   
+   | Game server (messages, bloodstains,      ghosts) | `play.seamlesshunt.com` — no.    port |
+   
+   | Server address (bells and summons) |     `play.seamlesshunt.com:31313` |
+   
+   | WebAPI address |                         `play.seamlesshunt.com:31315` — or         leave blank |
+   
+   | Online ID / Password | their own.        shadNet account (or set via the launch.    `.cmd`) |
+
+   The **Game server** field is the one people miss - it defaults to `thehuntersdream.com`. The emulator and BBport talk to each other *only* through the BBSC relay, and the relay lives on the game server. If that field points somewhere else, you'll see each other and get as far as "waiting to join / host" but never connect.
+   
+4. **Your own account each.** One shadNet account per player, registered at <https://seamlesshunt.com/>. Sharing one account gives the second login error 6.
+
+### If it doesn't connect
+
+| What you see | What it means | Fix |
+|---|---|---|
+
+| *"You are currently not signed into PlayStation Network"* at launch | Your game never logged into shadNet. You're offline, and nothing will connect. | Make your own account on seamlesshunt.com, re-run `bbsc-setup.py` with it, pick **Connect to network** at the title. |
+
+| Kin Bell's **Use** is greyed out (only Discard) | The game's usability check said no - usually *offline* (see above), or it still thinks you're in a session from a hung join. | Get online first; if already online, full quit and relaunch. |
+
+| Both players stuck on "waiting to join / host" | You share the bells server but not the game server - almost always the BBport **Game server** field. | Set all three BBport fields to the same host, as in the table. |
+
+Two log lines tell you where you stand (both in the timeline log, which is written every run even
+with logging off):
+
+```bash
+
+grep -h RELAY     ~/.local/share/shadPS4/log/bbsc-timeline-*.txt | tail   # want: connected to ...:20444
+
+grep -h 'Kin Bell' ~/.local/share/shadPS4/log/bbsc-timeline-*.txt | tail   # names the exact reason it's blocked
+
+And the login result is in the main log (`shad_log.txt`, logging on): `grep -a 'Login'`. No *"Login packet sent"* line = the game never tried; *error code 7* = that username doesn't exist on the server; *8* = wrong password; *6* = a stale session from a crash (close every instance, wait a minute, retry).
+
 ## Steam Deck settings
 
 Tested on a Steam Deck LCD: a steady 30 FPS at 1280x800 (GPU around 75-85%) with these shadPS4 patches
