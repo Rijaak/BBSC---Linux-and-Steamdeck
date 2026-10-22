@@ -57,6 +57,9 @@ cd bbsc-linux
 To launch from Game Mode: add `run-bbsc.sh` as a Non-Steam Game and put the `eboot.bin` path in its
 Launch Options. Do the Steam Deck settings and the online setup below before your first real session.
 
+**Before your first real session:** set `GPU.readbacks_mode: 1` in
+`~/.local/share/shadPS4/config.json`. This is **required** — without it the game draws huge triangles across the screen after deaths and area loads. The full Deck setup is under *Steam Deck settings* below, but this one setting applies to everyone.
+
 ## Upgrade (drop-in binary swap)
 
 Updates only replace the emulator binary. Config, saves, patches and your account are untouched.
