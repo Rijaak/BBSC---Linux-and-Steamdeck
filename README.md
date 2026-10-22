@@ -110,17 +110,11 @@ Cross-play works (tested: Steam Deck on 0.0.2.1 ↔ BBport on Windows). Three th
 
    | BBport field | Value |
    |---|---|
-   
    | Play online | on |
-   
    | Play with | shadNet server |
-   
    | Game server (messages, bloodstains,      ghosts) | `play.seamlesshunt.com` — no.    port |
-   
    | Server address (bells and summons) |     `play.seamlesshunt.com:31313` |
-   
    | WebAPI address |                         `play.seamlesshunt.com:31315` — or         leave blank |
-   
    | Online ID / Password | their own.        shadNet account (or set via the launch.    `.cmd`) |
 
    The **Game server** field is the one people miss - it defaults to `thehuntersdream.com`. The emulator and BBport talk to each other *only* through the BBSC relay, and the relay lives on the game server. If that field points somewhere else, you'll see each other and get as far as "waiting to join / host" but never connect.
