@@ -131,12 +131,10 @@ Cross-play works (tested: Steam Deck on 0.0.2.1 ↔ BBport on Windows). Three th
 
 | What you see | What it means | Fix |
 |---|---|---|
-
 | *"You are currently not signed into PlayStation Network"* at launch | Your game never logged into shadNet. You're offline, and nothing will connect. | Make your own account on seamlesshunt.com, re-run `bbsc-setup.py` with it, pick **Connect to network** at the title. |
-
 | Kin Bell's **Use** is greyed out (only Discard) | The game's usability check said no - usually *offline* (see above), or it still thinks you're in a session from a hung join. | Get online first; if already online, full quit and relaunch. |
-
 | Both players stuck on "waiting to join / host" | You share the bells server but not the game server - almost always the BBport **Game server** field. | Set all three BBport fields to the same host, as in the table. |
+
 
 Two log lines tell you where you stand (both in the timeline log, which is written every run even
 with logging off):
