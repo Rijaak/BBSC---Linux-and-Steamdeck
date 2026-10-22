@@ -21,6 +21,7 @@
 #endif
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -5877,6 +5878,30 @@ const std::string& BbscProcessUserId() {
             }
             while (i < line.size() && line[i] >= L'0' && line[i] <= L'9') {
                 out += static_cast<char>(line[i++]);
+            }
+        }
+#else
+        // Linux (2026-10-21): the same parse over /proc/self/cmdline. Its arguments are
+        // NUL-separated, so join them with spaces and "--user-id 1002" / "--user-id=1002" both
+        // read exactly as on Windows.
+        std::string line;
+        if (std::ifstream cmdline("/proc/self/cmdline", std::ios::binary); cmdline) {
+            line.assign(std::istreambuf_iterator<char>(cmdline), std::istreambuf_iterator<char>());
+            for (char& c : line) {
+                if (c == '\0') {
+                    c = ' ';
+                }
+            }
+        }
+        const std::string flag = "--user-id";
+        const size_t at = line.find(flag);
+        if (at != std::string::npos) {
+            size_t i = at + flag.size();
+            while (i < line.size() && (line[i] == ' ' || line[i] == '=' || line[i] == '"')) {
+                ++i;
+            }
+            while (i < line.size() && line[i] >= '0' && line[i] <= '9') {
+                out += line[i++];
             }
         }
 #endif
