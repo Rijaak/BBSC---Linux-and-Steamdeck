@@ -146,13 +146,16 @@ with logging off):
 grep -h RELAY     ~/.local/share/shadPS4/log/bbsc-timeline-*.txt | tail   # want: connected to ...:20444
 
 grep -h 'Kin Bell' ~/.local/share/shadPS4/log/bbsc-timeline-*.txt | tail   # names the exact reason it's blocked
+```
 
 And the login result is in the main log (`shad_log.txt`, logging on): `grep -a 'Login'`. No *"Login packet sent"* line = the game never tried; *error code 7* = that username doesn't exist on the server; *8* = wrong password; *6* = a stale session from a crash (close every instance, wait a minute, retry).
+
 
 ## Steam Deck settings
 
 Tested on a Steam Deck LCD: a steady 30 FPS at 1280x800 (GPU around 75-85%) with these shadPS4 patches
 on (`~/.local/share/shadPS4/patches/shadPS4/Bloodborne.xml`, `isEnabled="true"` on the patch's
+
 `<Metadata>` line, or tick them in the shadPS4 Qt launcher):
 
 - 30 FPS++
@@ -168,10 +171,8 @@ Leave **SSAO on** (do *not* enable the "Disable SSAO" patch): it's a screen-spac
 renders correctly and adds contact shadows and depth for almost no cost. Disable it only if you see dark
 grain or haloing.
 
-**Keep "Disable Dynamic Light Shadows" on.** shadPS4 renders Bloodborne's dynamic light shadows
-incorrectly and they cost GPU; the patch both tidies the lighting and saves about 7% GPU. (The large
-triangular "wedge" artifacts some players hit on death or an area reload are a *separate* problem - GPU
-vertex explosions - fixed by `GPU.readbacks_mode` below, not by this patch.)
+**Keep "Disable Dynamic Light Shadows" on.** shadPS4 renders Bloodborne's dynamic light shadows incorrectly and they cost GPU; the patch both tidies the lighting and saves about 7% GPU. (The large
+triangular "wedge" artifacts some players hit on death or an area reload are a *separate* problem - GPU vertex explosions - fixed by `GPU.readbacks_mode` below, not by this patch.)
 
 One-liner that enables exactly those eight:
 
