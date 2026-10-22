@@ -43,11 +43,18 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 #endif
 
 namespace Core::Bbsc {
 
-#ifdef _WIN32
 namespace {
 
 constexpr std::uint16_t DefaultRelayPort = 20444;
@@ -62,6 +69,26 @@ constexpr std::uint8_t EnvelopeType = 0x40;
 constexpr size_t EnvelopeSize = 13;
 constexpr std::int64_t SignalingFreshMs = 5'000;
 constexpr size_t SendQueueLimit = 256 * 1024;
+
+// Socket portability (2026-10-21, Linux build): one implementation on Windows (Winsock) and Linux
+// (BSD sockets). Before this the whole relay client was Windows-only and non-Windows builds got
+// empty stubs, so a Linux emulator never joined the relay and a BBport/mod player in the same
+// session could not hear it (see the header comment).
+#ifdef _WIN32
+using socket_t = SOCKET;
+constexpr socket_t InvalidSocket = INVALID_SOCKET;
+constexpr int ShutdownBoth = SD_BOTH;
+void CloseSocket(socket_t s) {
+    closesocket(s);
+}
+#else
+using socket_t = int;
+constexpr socket_t InvalidSocket = -1;
+constexpr int ShutdownBoth = SHUT_RDWR;
+void CloseSocket(socket_t s) {
+    close(s);
+}
+#endif
 
 #pragma pack(push, 1)
 struct FollowPacket {
@@ -82,7 +109,7 @@ std::mutex send_mutex;
 std::condition_variable send_cv;
 std::vector<std::vector<char>> send_queue;
 size_t send_queue_bytes = 0;
-SOCKET relay = INVALID_SOCKET;
+socket_t relay = InvalidSocket;
 std::atomic<int> peers{0};
 std::atomic<std::int64_t> signaling_ms{0};
 std::atomic<std::int64_t> own_sign_user{0};
@@ -172,7 +199,7 @@ std::uint32_t SessionKey() {
 
 std::uint32_t SendFrame(const void* data, std::uint32_t size) {
     std::scoped_lock lock{send_mutex};
-    if (relay == INVALID_SOCKET) {
+    if (relay == InvalidSocket) {
         return 0;
     }
     const std::uint32_t key = SessionKey();
@@ -196,7 +223,7 @@ std::uint32_t SendFrame(const void* data, std::uint32_t size) {
 void WriterThread() {
     for (;;) {
         std::vector<char> frame;
-        SOCKET s = INVALID_SOCKET;
+        socket_t s = InvalidSocket;
         {
             std::unique_lock lock{send_mutex};
             send_cv.wait(lock, [] { return !send_queue.empty(); });
@@ -205,7 +232,7 @@ void WriterThread() {
             send_queue_bytes -= frame.size();
             s = relay;
         }
-        if (s == INVALID_SOCKET) {
+        if (s == InvalidSocket) {
             continue;
         }
         int left = static_cast<int>(frame.size());
@@ -213,7 +240,7 @@ void WriterThread() {
         while (left > 0) {
             const int sent = send(s, at, left, 0);
             if (sent <= 0) {
-                shutdown(s, SD_BOTH); // the relay thread sees it in recv and reconnects
+                shutdown(s, ShutdownBoth); // the relay thread sees it in recv and reconnects
                 break;
             }
             at += sent;
@@ -222,7 +249,7 @@ void WriterThread() {
     }
 }
 
-bool ReadAll(SOCKET s, void* data, int size) {
+bool ReadAll(socket_t s, void* data, int size) {
     auto* at = static_cast<char*>(data);
     while (size > 0) {
         const int got = recv(s, at, size, 0);
@@ -320,8 +347,10 @@ void Dispatch(const std::vector<std::uint8_t>& wrapped) {
 }
 
 void RelayThread() {
+#ifdef _WIN32
     WSADATA wsa{};
     WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
     std::string last_problem;
     for (;;) {
         std::string host;
@@ -346,17 +375,17 @@ void RelayThread() {
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
         addrinfo* found = nullptr;
-        SOCKET s = INVALID_SOCKET;
+        socket_t s = InvalidSocket;
         if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &found) == 0) {
             s = socket(found->ai_family, found->ai_socktype, found->ai_protocol);
-            if (s != INVALID_SOCKET &&
+            if (s != InvalidSocket &&
                 connect(s, found->ai_addr, static_cast<int>(found->ai_addrlen)) != 0) {
-                closesocket(s);
-                s = INVALID_SOCKET;
+                CloseSocket(s);
+                s = InvalidSocket;
             }
             freeaddrinfo(found);
         }
-        if (s == INVALID_SOCKET) {
+        if (s == InvalidSocket) {
             const std::string problem = "cannot reach " + host + ":" + std::to_string(port);
             if (problem != last_problem) {
                 last_problem = problem;
@@ -366,12 +395,18 @@ void RelayThread() {
             std::this_thread::sleep_for(std::chrono::seconds(5));
             continue;
         }
-        BOOL on = TRUE;
+        const int on = 1;
         setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&on), sizeof(on));
         setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const char*>(&on), sizeof(on));
+#ifdef _WIN32
         const DWORD send_timeout_ms = 10'000;
         setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&send_timeout_ms),
                    sizeof(send_timeout_ms));
+#else
+        const timeval send_timeout{10, 0}; // 10 s, the same as the Windows DWORD above
+        setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&send_timeout),
+                   sizeof(send_timeout));
+#endif
         {
             std::scoped_lock lock{send_mutex};
             relay = s;
@@ -395,12 +430,12 @@ void RelayThread() {
         }
         {
             std::scoped_lock lock{send_mutex};
-            relay = INVALID_SOCKET;
+            relay = InvalidSocket;
             send_queue.clear();
             send_queue_bytes = 0;
         }
-        shutdown(s, SD_BOTH);
-        closesocket(s);
+        shutdown(s, ShutdownBoth);
+        CloseSocket(s);
         peers = 0;
         Log("connection lost after " + std::to_string((NowMs() - connected_at) / 1000) + " s, " +
             std::to_string(frames_in) + " frames in - reconnecting");
@@ -429,9 +464,12 @@ void StartRelayClient(std::string_view serial) {
     }
     const auto seed = static_cast<std::uint64_t>(
         std::chrono::high_resolution_clock::now().time_since_epoch().count());
-    own_id = static_cast<std::uint32_t>((seed ^ static_cast<std::uint64_t>(GetCurrentProcessId())) *
-                                        2654435761ull) |
-             1u;
+#ifdef _WIN32
+    const auto pid = static_cast<std::uint64_t>(GetCurrentProcessId());
+#else
+    const auto pid = static_cast<std::uint64_t>(getpid());
+#endif
+    own_id = static_cast<std::uint32_t>((seed ^ pid) * 2654435761ull) | 1u;
     std::thread(RelayThread).detach();
     std::thread(WriterThread).detach();
 }
@@ -465,17 +503,5 @@ void RelaySendAimedPlacement(std::int64_t target_user, const std::string& placem
                     "({} other player(s) on the relay)",
                     target_user, reached));
 }
-
-#else // not Windows: the relay client is Windows-only for now
-
-void StartRelayClient(std::string_view) {}
-std::uint32_t RelaySendPacket(const void*, std::uint32_t) {
-    return 0;
-}
-void NoteSignalingBbscPacket() {}
-void NoteOwnSignUserId(std::int64_t) {}
-void RelaySendAimedPlacement(std::int64_t, const std::string&) {}
-
-#endif
 
 } // namespace Core::Bbsc
