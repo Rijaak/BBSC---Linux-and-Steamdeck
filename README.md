@@ -158,7 +158,7 @@ Linux changes in this fork: BBSC save-folder lookup uses the emulator's user dir
 
 Reporting bugs
 
-Post in #Release BBSC for Linux / Steam Deck on the Discord with the version, host or guest, what happened and when, and the logs: the emulator log ~/.local/share/shadPS4/log/shad_log.txt (or, if you use a user folder next to the executable, user/log/shad_log.txt) and the bbsc-timeline-*.txt from the same run. For co-op problems, logs from both players.
+Post in #Release BBSC for Linux / Steam Deck on the Discord with the version, host or guest, what happened and when, and the logs: the emulator log ~/.local/share/shadPS4/log/shad_log.txt (or, if you use a user folder next to the executable, user/log/shad_log.txt) and the bbsc-timeline-*.txt from the same run. For co-op problems, logs from both players. Linux-only problems go here, not upstream's #bug-reports
 
 Credits
 CLS_AMG - BBSC
