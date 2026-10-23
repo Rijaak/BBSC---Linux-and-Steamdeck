@@ -330,7 +330,7 @@ The `mesa-kosmickrisp` submodule is macOS-only and can be skipped.
 - **framilano (fra98_)** - Bloodborne Nucleus Co-op handler; tester
 - **deadinside28, Supermedo** - BBport
 - **shadPS4 team** - the emulator
-- **Rijaak** - Linux / Steam Deck build and testing
+- **Rijaak, Wraith** - Linux / Steam Deck build and testing
 
 ## License
 
