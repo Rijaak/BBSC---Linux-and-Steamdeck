@@ -331,6 +331,7 @@ The `mesa-kosmickrisp` submodule is macOS-only and can be skipped.
 - **deadinside28, Supermedo** - BBport
 - **shadPS4 team** - the emulator
 - **Rijaak, Wraith** - Linux / Steam Deck build and testing
+- **spero** - tester
 
 ## License
 
