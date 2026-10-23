@@ -87,13 +87,13 @@ server. **Both players in a session must be on the same server.**
 **SeamlessHunt (public community server):** make an account at <https://seamlesshunt.com/>, then
 
 ```bash
-python3 bbsc-setup.py --server play.seamlesshunt.com:31313 --no-register --name YourName --password YourPassword
+python3 bbsc-setup.py --server play.seamlesshunt.com:31313 --no-register --name [YourName] --password [YourPassword]
 ```
 
 **A host's private server:** use the server card they give you
 
 ```bash
-python3 bbsc-setup.py --card "/path/to/BBSC-card.json" --name YourName --password secret
+python3 bbsc-setup.py --card "/path/to/BBSC-card.json" --name [YourName] --password secret
 ```
 
 Other options: `--user-id N` (attach to a specific shadPS4 local user), `--game-server host` (a
@@ -102,6 +102,17 @@ separate game-API host), `--key` (registration key). Then start the game and pic
 Login errors: **6** (already logged in) is a stale session after a crash - wait a minute, make sure
 no second instance is running (`pkill -9 -f shadps4-bbsc`), retry. **8** is a wrong password - rerun
 the setup with the right one.
+
+### Ports (all on the server — the same for every player)
+
+| Port | What it is | Do you enter it? |
+|---|---|---|
+| 31313 | shadNet server: accounts, login, bells / summons | yes — the server address |
+| 31315 | shadNet WebAPI | yes — or leave blank, it's derived |
+| 20443 | game API: server list, messages, bloodstains, ghosts | no — the game picks it from the game server host |
+| 20444 | **BBSC relay** — the channel emulator and BBport players talk over | no — derived from the game server host |
+
+These are the defaults; a privately hosted server may use others, but they never vary per player.
 
 ## Playing with Windows / BBport friends
 
@@ -120,7 +131,7 @@ Cross-play works (tested: Steam Deck on 0.0.2.1 ↔ BBport on Windows). Three th
    | WebAPI address |                         `play.seamlesshunt.com:31315` — or         leave blank |
    | Online ID / Password | their own.        shadNet account (or set via the launch.    `.cmd`) |
 
-   The **Game server** field is the one people miss - it defaults to `thehuntersdream.com`. The emulator and BBport talk to each other *only* through the BBSC relay, and the relay lives on the game server. If that field points somewhere else, you'll see each other and get as far as "waiting to join / host" but never connect.
+   The **Game server** field is the one people miss - it defaults to `thehuntersdream.com`. The emulator and BBport talk to each other *only* through the BBSC relay, and the relay lives on the game server, at port 20444 — you never enter that port; the game derives it from whatever host is in the Game server field. That's the whole reason that field has to match. If that field points somewhere else, you'll see each other and get as far as "waiting to join / host" but never connect.
    
 4. **Your own account each.** One shadNet account per player, registered at <https://seamlesshunt.com/>. Sharing one account gives the second login error 6.
 
