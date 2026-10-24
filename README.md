@@ -60,6 +60,9 @@ Launch Options. Do the Steam Deck settings and the online setup below before you
 **Before your first real session:** set `GPU.readbacks_mode: 1` in
 `~/.local/share/shadPS4/config.json`. This is **required** — without it the game draws huge triangles across the screen after deaths and area loads. The full Deck setup is under *Steam Deck settings* below, but this one setting applies to everyone.
 
+**Steam Deck:** also set the **UMA Frame Buffer to 4 GB** in BIOS before any long session -
+without it, heavy areas freeze the game. Steps under *Steam Deck settings*.
+
 ## Upgrade (drop-in binary swap)
 
 Updates only replace the emulator binary. Config, saves, patches and your account are untouched.
@@ -158,6 +161,34 @@ And the login result is in the main log (`shad_log.txt`, logging on): `grep -a '
 
 
 ## Steam Deck settings
+
+### BIOS: UMA Frame Buffer 4 GB (strongly recommended)
+
+Bloodborne's GPU working set is large, and the Deck ships with only 1 GB of memory dedicated to
+the GPU - the rest gets borrowed from system RAM under pressure. With the 1 GB default, heavy
+areas (Central Yharnam especially) can exhaust GPU memory and stall the graphics driver for
+minutes: the game freezes with no error anywhere. Giving the GPU 4 GB up front fixes it. It's a
+one-time, reversible firmware setting, and every Deck emulation guide recommends it.
+
+1. Power menu -> **Shut Down** (fully off, not sleep).
+2. Hold **Volume +**, press and release **Power**, keep holding Volume + until the boot menu.
+3. **Setup Utility** -> **Advanced** -> **UMA Frame Buffer Size** -> **4G**.
+4. **Exit -> Exit Saving Changes.** The Deck reboots normally.
+
+Verify it took:
+
+```bash
+cat /sys/class/drm/card*/device/mem_info_vram_total | head -1   # ~4294967296 = 4 GB
+```
+
+`free -h` will now show ~12 GB instead of ~14 GB - that's the 3 GB moved to the GPU, which is the
+point. Nothing else on the Deck is affected. (Optional on top: CryoUtilities' recommended settings -
+16 GB swap, swappiness 1 - add headroom for the guest memory and help with stutter.)
+
+**If freezes come back months later, check this first.** Nothing guards a BIOS setting: a
+firmware update (sometimes bundled with a SteamOS update) can reset it to 1G. It's not every
+update and it's not frequent, but the symptom is unmistakable - Central Yharnam freezes again with
+no error. Run the `mem_info_vram_total` line above; if it reads ~1 GB, set it back to 4G.
 
 Tested on a Steam Deck LCD: a steady 30 FPS at 1280x800 (GPU around 75-85%) with these shadPS4 patches
 on (`~/.local/share/shadPS4/patches/shadPS4/Bloodborne.xml`, `isEnabled="true"` on the patch's
@@ -269,6 +300,17 @@ From upstream 0.0.2 (still a test version - **back up your saves**):
 - As a guest, after a boss kill, items, NPCs or levers sometimes can't be used.
 - Chalice Dungeons: no co-op inside them yet (solo works).
 - Frame-rate mismatch between players: elevators skipping, floating, falling through (see above).
+
+- - **Freeze with no error in a heavy area (Central Yharnam), process alive but stuck:** GPU memory
+  starvation stalling the graphics driver. Fix: 4 GB UMA Frame Buffer in BIOS (see Steam Deck
+  settings). Signature: `free -h` shows under 1 GB available and `mem_info_vram_used` sits at the
+  1 GB ceiling; the GPU thread is stuck in the kernel and even `kill -9` takes minutes.
+- **Freeze the instant an external display disconnects** (USB-C AR glasses, a dock): gamescope
+  switches to the internal screen and changes the game's mode, and the emulator doesn't survive
+  it. Fix: in Steam, the game's Properties -> Game Resolution -> set it explicitly (1280x800 or
+  1920x1080, not Default) and turn on "Set resolution for internal and external display". The game
+  then runs on its own fixed-resolution Xwayland server, and a disconnect becomes a flicker
+  instead of a freeze.
 
 Linux build:
 
