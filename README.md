@@ -5,6 +5,7 @@ Steam Deck. BBSC is by [CLS_AMG](https://github.com/CLSAMG22/BBSC); this repo pa
 with the fixes the Linux port needs. Upstream ships Windows only - this is the Linux build.
 
 **Downloads:** [Releases](https://github.com/Rijaak/BBSC---Linux-and-Steamdeck/releases) ·
+**New here? Start with the [Quick Start](QUICKSTART.md)** - Deck from zero to co-op in 8 steps.
 **Upstream:** [CLSAMG22/BBSC](https://github.com/CLSAMG22/BBSC) ·
 **Community:** [BBSC Discord](https://discord.gg/Df7BCmfWdt) ·
 **Bugs (this build):** the `#Release BBSC for Linux / Steam Deck` thread on the Discord
