@@ -301,7 +301,7 @@ From upstream 0.0.2 (still a test version - **back up your saves**):
 - Chalice Dungeons: no co-op inside them yet (solo works).
 - Frame-rate mismatch between players: elevators skipping, floating, falling through (see above).
 
-- - **Freeze with no error in a heavy area (Central Yharnam), process alive but stuck:** GPU memory
+- **Freeze with no error in a heavy area (Central Yharnam), process alive but stuck:** GPU memory
   starvation stalling the graphics driver. Fix: 4 GB UMA Frame Buffer in BIOS (see Steam Deck
   settings). Signature: `free -h` shows under 1 GB available and `mem_info_vram_used` sits at the
   1 GB ceiling; the GPU thread is stuck in the kernel and even `kill -9` takes minutes.
