@@ -5,14 +5,17 @@ experience needed. Everything is copy-paste; the only typing you do is your own 
 and file path. The full reference (every setting, cross-play with Windows players, known issues)
 is the [README](README.md) - you don't need it to get playing.
 
-**You need three things before you start:**
+**You need four things before you start:**
 
 1. Your own Bloodborne dump, **CUSA03173 version 01.09**, as a folder with `eboot.bin` in it. (A
    base-game dump plus an update folder named `CUSA03173-UPDATE` next to it also works.) This guide
    does not cover dumping the game.
 2. A free account on **<https://seamlesshunt.com/>** - the public community server everyone plays on.
-   Make it in any browser now; you'll type the name and password in step 6.
-3. The Deck in **Desktop Mode** (Steam button → Power → Switch to Desktop) with **Konsole** open
+   Make it in any browser now; you'll type the name and password in step 7.
+3. **`libSceNgs2.sprx`** - Bloodborne's audio module, from your own PS4's firmware (it's Sony's
+   file, so it isn't in the download). The emulator has a built-in stand-in, but Bloodborne wants
+   the real one; this guide assumes you have it. Put it in `~/Downloads` for now.
+4. The Deck in **Desktop Mode** (Steam button → Power → Switch to Desktop) with **Konsole** open
    (Application menu → System → Konsole). Every command below is pasted into Konsole. Paste with
    **Ctrl+Shift+V**.
 
@@ -108,7 +111,19 @@ EOF
 
 You should see `8 patches enabled:` and the list. Leave SSAO alone (don't enable "Disable SSAO").
 
-## 6. Your online account
+## 6. The audio module
+
+```bash
+mkdir -p ~/.local/share/shadPS4/sys_modules
+cp ~/Downloads/libSceNgs2.sprx ~/.local/share/shadPS4/sys_modules/
+ls -la ~/.local/share/shadPS4/sys_modules/
+```
+
+You should see `libSceNgs2.sprx` listed, a few hundred KB. The emulator picks it up automatically on
+the next launch; nothing to configure. (Any other `.sprx` you were told to use goes in the same
+folder.)
+
+## 7. Your online account
 
 You made the account on seamlesshunt.com already. This tells the emulator about it, points the game
 at the community server, and writes the server files. Run it from the `bbsc-linux` folder:
@@ -121,7 +136,7 @@ python3 bbsc-setup.py --server play.seamlesshunt.com:31313 --no-register --name 
 Use the exact name and password you registered with. Each player needs their **own** account - two
 people on one account gives the second one "login error 6".
 
-## 7. Add it to Steam (so it runs in Game Mode)
+## 8. Add it to Steam (so it runs in Game Mode)
 
 Still in Desktop Mode, in the Steam window:
 
@@ -134,7 +149,7 @@ Still in Desktop Mode, in the Steam window:
    - **Compatibility** tab: leave **"Force the use of a specific Steam Play compatibility tool"
      unticked.** This is a native Linux app; Proton must not be involved.
 
-## 8. Game Mode settings, then play
+## 9. Game Mode settings, then play
 
 Back to Game Mode (**Return to Gaming Mode** on the desktop). Open the game's page in your Library,
 press the **gear icon → Properties**, and on the first tab set **Game Resolution** to **1280x800**
@@ -173,9 +188,10 @@ BBport, or this Linux build) and on the **same server** (SeamlessHunt).
 
 | What you see | What it is | Do this |
 |---|---|---|
-| *"You are currently not signed into PlayStation Network"* at launch | The game didn't log in. Usually a typo in step 6, or Wi-Fi not up yet after a reboot. | Rerun step 6 with the right name/password; or just restart the game. |
+| *"You are currently not signed into PlayStation Network"* at launch | The game didn't log in. Usually a typo in step 7, or Wi-Fi not up yet after a reboot. | Rerun step 7 with the right name/password; or just restart the game. |
 | Giant coloured triangles after a death or load | `readbacks_mode` isn't 1 | Redo step 5 and check the grep output. |
 | Vanilla bells, no Hunt/Kin Bell | Kit not granted yet | Full quit, relaunch, load the character. |
+| No music or sound effects | The audio module isn't in place | Redo step 6 and check the `ls` shows `libSceNgs2.sprx`. |
 | Kin Bell's **Use** is greyed out | You're offline, or a hung join | Get online first; if you are, full quit and relaunch. |
 | Both players stuck on "waiting to join / host" | Different servers. Nearly always the Windows/BBport player's **Game server** field. | They set *all* server fields to `play.seamlesshunt.com` - see the README's cross-play section. |
 | Game freezes with no error, then closes by itself a minute or two later | An emulator crash followed by a long core dump. Being investigated. | Post it (below). It helps a lot if you turn logging on first: in `config.json`, in the `"Log"` block, set `"enable": true` and `"filter": "*:Warning"`. |
