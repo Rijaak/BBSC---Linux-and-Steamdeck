@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+
 #include "common/alignment.h"
 #include "common/assert.h"
+#include "common/logging/log.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -86,6 +89,32 @@ void UniqueBuffer::Create(const vk::BufferCreateInfo& buffer_ci, MemoryUsage usa
     VkBuffer unsafe_buffer{};
     VkResult result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &alloc_ci, &unsafe_buffer,
                                       &allocation, out_alloc_info);
+    if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY || result == VK_ERROR_OUT_OF_HOST_MEMORY) {
+        // Linux fork (2026-10-25): on a Steam Deck the VK_EXT_memory_budget budget covers VRAM
+        // plus system memory and the game's GPU footprint reaches it after about an hour in a
+        // heavy area; the old behaviour was to assert here ("Failed allocating buffer with error
+        // ErrorOutOfDeviceMemory") and take the whole game down. The budget is advisory - the
+        // driver can still allocate and will page between VRAM and system memory itself - so
+        // retry without the budget flag, then once more letting VMA pick any memory type.
+        static std::atomic<u32> over_budget_warnings{0};
+        if (over_budget_warnings.fetch_add(1) < 8) {
+            LOG_WARNING(Render_Vulkan,
+                        "GPU memory budget exhausted allocating a {} byte {} buffer ({}); "
+                        "retrying over budget",
+                        buffer_ci.size, BufferTypeName(usage),
+                        vk::to_string(vk::Result{result}));
+        }
+        VmaAllocationCreateInfo retry_ci = alloc_ci;
+        retry_ci.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+        result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &retry_ci, &unsafe_buffer,
+                                 &allocation, out_alloc_info);
+        if (result != VK_SUCCESS) {
+            retry_ci.usage = VMA_MEMORY_USAGE_AUTO;
+            retry_ci.preferredFlags = 0;
+            result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &retry_ci, &unsafe_buffer,
+                                     &allocation, out_alloc_info);
+        }
+    }
     ASSERT_MSG(result == VK_SUCCESS, "Failed allocating buffer with error {}",
                vk::to_string(vk::Result{result}));
     buffer = vk::Buffer{unsafe_buffer};

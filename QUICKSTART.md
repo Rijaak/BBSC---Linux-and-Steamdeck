@@ -195,7 +195,7 @@ BBport, or this Linux build) and on the **same server** (SeamlessHunt).
 | No music or sound effects | The audio module isn't in place | Redo step 6 and check the `ls` shows `libSceNgs2.sprx`. |
 | Kin Bell's **Use** is greyed out | You're offline, or a hung join | Get online first; if you are, full quit and relaunch. |
 | Both players stuck on "waiting to join / host" | Different servers. Nearly always the Windows/BBport player's **Game server** field. | They set *all* server fields to `play.seamlesshunt.com` - see the README's cross-play section. |
-| Game freezes with no error, then closes by itself a minute or two later | An emulator crash followed by a long core dump. Being investigated. | Post it (below). It helps a lot if you turn logging on first: in `config.json`, in the `"Log"` block, set `"enable": true` and `"filter": "*:Warning"`. |
+| Game freezes with no error after ~45-60 min in a heavy area, then closes by itself | GPU memory ran out - an emulator bug in 0.0.2.1 and earlier, fixed in 0.0.2.2 | Update to 0.0.2.2 or newer (README -> *Upgrade*; this one also replaces `run-bbsc.sh`). If it still happens on 0.0.2.2, post it with logging on: in `config.json`, `"Log"` block, `"enable": true`, `"filter": "*:Warning"`, `"sync": true`. |
 
 **Where to post:** the **"Release BBSC for Linux / Steam Deck"** thread on the
 [BBSC Discord](https://discord.gg/Df7BCmfWdt), or a

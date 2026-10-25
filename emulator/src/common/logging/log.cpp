@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -31,6 +32,10 @@ bool g_should_append = false;
 
 static std::shared_ptr<spdlog_stdout> g_console_sink;
 static std::shared_ptr<LogFileSink> g_shad_file_sink;
+// Linux fork (2026-10-25): kept so Flush() can drain the background queue before a crash. With
+// async logging the assertion message that explains a crash sat in this queue while the process
+// died; Flush() used to flush the file sink only, which never sees a queued message.
+static std::shared_ptr<spdlog::sinks::async_sink> g_async_sink;
 
 std::unordered_map<std::string_view, std::shared_ptr<spdlog::logger>> ALL_LOGGERS{
     {Class::Common, nullptr},
@@ -242,11 +247,17 @@ void Shutdown() {
         logger.reset();
     }
 
+    g_async_sink.reset();
     g_shad_file_sink.reset();
     g_console_sink.reset();
 }
 
 void Flush() {
+    if (g_async_sink != nullptr) {
+        g_async_sink->flush();
+        // Bounded: never let a crash path hang on a stuck log thread.
+        g_async_sink->wait_all(std::chrono::milliseconds(2000));
+    }
     if (g_shad_file_sink != nullptr) {
         g_shad_file_sink->flush();
     }
@@ -279,8 +290,9 @@ void Terminate() {
 void UpdateSinks() {
     std::initializer_list<spdlog::sink_ptr> sinks{g_console_sink, g_shad_file_sink};
 
-    std::initializer_list<spdlog::sink_ptr> async_sink{std::make_shared<spdlog::sinks::async_sink>(
-        spdlog::sinks::async_sink::config{.sinks = sinks})};
+    g_async_sink = std::make_shared<spdlog::sinks::async_sink>(
+        spdlog::sinks::async_sink::config{.sinks = sinks});
+    std::initializer_list<spdlog::sink_ptr> async_sink{g_async_sink};
 
     std::initializer_list<spdlog::sink_ptr> dup_filter{
         std::make_shared<spdlog::sinks::dup_filter_sink_mt>(

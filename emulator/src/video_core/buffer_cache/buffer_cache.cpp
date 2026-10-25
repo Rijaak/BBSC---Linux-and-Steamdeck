@@ -4,6 +4,7 @@
 #include <algorithm>
 #include "common/alignment.h"
 #include "common/debug.h"
+#include "common/logging/log.h"
 #include "common/scope_exit.h"
 #include "core/memory.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -641,6 +642,10 @@ void BufferCache::ChangeRegister(BufferId buffer_id) {
 
 bool BufferCache::SynchronizeBuffer(Buffer& buffer, VAddr device_addr, u32 size, bool is_written,
                                     bool is_texel_buffer) {
+    // Linux fork (2026-10-25): every use counts for the garbage collector, not just uses that
+    // needed an upload - otherwise a buffer the game reads every frame but never rewrites looks
+    // idle and gets evicted and recreated over and over once the collector is active.
+    TouchBuffer(buffer);
     boost::container::small_vector<vk::BufferCopy, 4> copies;
     size_t total_size_bytes = 0;
     VAddr buffer_start = buffer.CpuAddr();
@@ -848,19 +853,61 @@ void BufferCache::RunGarbageCollector() {
     if (total_used_memory < trigger_gc_memory) {
         return;
     }
+    // Linux fork (2026-10-25): this collector computed its thresholds and defined the clean-up
+    // step but never swept the LRU, so cached buffers were never freed. On a Steam Deck (VRAM
+    // and system memory are one pool) Bloodborne's streaming filled the whole Vulkan memory
+    // budget in about an hour in Central Yharnam and the next allocation failed with
+    // ErrorOutOfDeviceMemory. Sweep like the texture cache does: buffers not used for
+    // ticks_to_destroy submissions are freed. Only buffers with no GPU-written data are
+    // candidates - the data they hold is a copy of guest memory and comes back on the next use.
+    // Buffers holding GPU-written data are never evicted here: writing them back needs a GPU
+    // round trip inside the submit path, and the first attempt at that (a synchronous download
+    // with scheduler.Finish()) deadlocked the emulator within seconds on the Central Yharnam
+    // bridge. Dirty buffers are a small minority; the over-budget retry in UniqueBuffer::Create
+    // covers whatever they add up to.
     const bool aggressive = total_used_memory >= critical_gc_memory;
     const u64 ticks_to_destroy = std::min<u64>(aggressive ? 80 : 160, gc_tick);
     int max_deletions = aggressive ? 64 : 32;
+    u64 freed_bytes = 0;
     const auto clean_up = [&](BufferId buffer_id) {
         if (max_deletions == 0) {
-            return;
+            return true;
+        }
+        Buffer& buffer = slot_buffers[buffer_id];
+        if (buffer.is_deleted) {
+            return false;
+        }
+        if (IsRegionGpuModified(buffer.CpuAddr(), buffer.SizeBytes())) {
+            return false;
         }
         --max_deletions;
-        Buffer& buffer = slot_buffers[buffer_id];
-        // InvalidateMemory(buffer.CpuAddr(), buffer.SizeBytes());
-        DownloadBufferMemory<true>(buffer, buffer.CpuAddr(), buffer.SizeBytes(), true);
+        freed_bytes += buffer.SizeBytes();
+        // The buffer was the synced copy of this guest range, so the tracker considers the range
+        // clean and keeps its pages write-protected. Hand the range back to the CPU before the
+        // buffer goes: this lifts the protection and makes the next buffer for the range upload
+        // from guest memory. Without it a CPU write after eviction faults forever (the fault
+        // handler's InvalidateMemory returns early for an unregistered range without touching
+        // the protection - one game thread at 100% in R state, everything else waiting on it,
+        // which is exactly how the first 0.0.2.2 build hung within seconds on the Central
+        // Yharnam bridge) and a recreated buffer would come back empty.
+        memory_tracker->MarkRegionAsCpuModified(buffer.CpuAddr(), buffer.SizeBytes());
         DeleteBuffer(buffer_id);
+        return false;
     };
+    lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
+    if (freed_bytes != 0) {
+        static u64 freed_total = 0;
+        static u32 freed_logs = 0;
+        freed_total += freed_bytes;
+        if (freed_logs < 16 || (freed_logs % 256) == 0) {
+            LOG_INFO(Render_Vulkan,
+                     "Buffer cache GC{}: freed {} MiB this pass, {} MiB total, GPU usage {} MiB "
+                     "(trigger {} MiB, critical {} MiB)",
+                     aggressive ? " (critical)" : "", freed_bytes >> 20, freed_total >> 20,
+                     total_used_memory >> 20, trigger_gc_memory >> 20, critical_gc_memory >> 20);
+        }
+        ++freed_logs;
+    }
 }
 
 void BufferCache::TouchBuffer(const Buffer& buffer) {

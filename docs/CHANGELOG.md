@@ -3,6 +3,48 @@
 Changes made in this Linux fork, newest first. Versions are `<BBSC version>.<Linux revision>`.
 Upstream BBSC's own changelog is in the upstream repo: https://github.com/CLSAMG22/BBSC
 
+## 2026-10-25 - Linux fork 0.0.2.2: fix the ~1 hour "freeze" in heavy areas (GPU memory exhaustion); crash logs survive
+
+- Symptom: on the Steam Deck the game froze with no error after roughly 45-60 minutes in Central
+  Yharnam (walking, solo or online), then closed by itself two minutes later. `coredumpctl` showed
+  SIGTRAP; with synchronous logging the last log line was
+  `buffer.cpp:90 Create: Assertion Failed! Failed allocating buffer with error ErrorOutOfDeviceMemory`
+  on the GPU command-processor thread. The "freeze" was systemd-coredump draining a 6 GB core of the
+  dying process.
+- Root cause 1 (`src/video_core/buffer_cache/buffer_cache.cpp`, `RunGarbageCollector`): the buffer
+  cache's collector computed its thresholds and defined its clean-up step but never swept the LRU -
+  cached GPU buffers were never freed. Bloodborne's streaming grew the GPU footprint until the whole
+  Vulkan memory budget was used. On a Deck that budget is VRAM plus system memory (the UMA Frame
+  Buffer size only moves the split, which is why 4 GB UMA changed nothing; VRAM read 3930/4096 MB at
+  the crash with ~1.3 GB of system RAM left). Fixed: the sweep now runs like the texture cache's -
+  buffers unused for 160 submissions (80 when over the critical line) are freed, up to 32 (64) per
+  pass. Only buffers with no GPU-written data are evicted (writing dirty ones back needs a GPU
+  round trip inside the submit path; the first attempt, a synchronous download, was dropped) - the
+  over-budget retry below covers them. An evicted range is handed back to the CPU
+  (`MarkRegionAsCpuModified`) before the buffer goes: the tracker otherwise keeps the pages
+  write-protected and the fault handler returns early for an unregistered range, so the first
+  CPU write after eviction faulted forever (one game thread at 100%, everything else waiting - the
+  first 0.0.2.2 build hung within seconds on the Central Yharnam bridge), and a recreated buffer
+  would have come back without an upload. `SynchronizeBuffer` now touches the LRU on every use,
+  not only on uploads, so buffers the game reads every frame without rewriting are not churned.
+- Root cause 2 (`buffer.cpp`, `image.cpp`): an allocation failure was a fatal assertion. The
+  VK_EXT_memory_budget budget is advisory - the driver pages between VRAM and system memory itself -
+  so `vmaCreateBuffer`/`vmaCreateImage` now retry without `VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT`,
+  then with any memory type, and only assert if all three fail. First eight occurrences are logged
+  as warnings (`GPU memory budget exhausted ... retrying over budget`).
+- Crash diagnostics (`src/common/logging/log.cpp`): with `Log.sync=false` the assertion message that
+  explains a crash sat in spdlog's background queue while the process died - `Common::Log::Flush()`
+  flushed the file sink, which never sees a queued message. Flush now drains the async sink
+  (`wait_all`, bounded to 2 s) first, so `assert_fail_impl` -> `Emulator::Shutdown` -> `Flush`
+  gets the line onto disk before `int3`. Three days of empty crash logs were this.
+- `run-bbsc.sh`: `ulimit -c 0`. A crash now closes the game in about a second instead of sitting
+  frozen for two minutes while a 6 GB core is written that SteamOS then discards anyway.
+- README: the UMA 4 GB section no longer claims to fix freezes (it is still the standard Deck tweak);
+  Known issues describes the real cause and fix; swappiness advice corrected for SteamOS with zram
+  (keep 60). QUICKSTART.md added (Deck from zero to co-op in 9 steps, incl. `libSceNgs2.sprx`,
+  the patch file download and enabling, and the "run setup with the game closed, quote the
+  password" gotchas found by the first outside users).
+
 ## 2026-10-21 - Linux fork 0.0.2.1: rebased onto BBSC 0.0.2; relay client and --user-id ported to Linux
 
 - Versioning: the Linux releases are now `<BBSC version>.<Linux revision>`. 0.0.1.2 and 0.0.1.3

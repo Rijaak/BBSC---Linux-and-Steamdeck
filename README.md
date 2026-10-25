@@ -17,11 +17,12 @@ BBSC version** - 0.0.1 and 0.0.2 clients cannot connect to each other.
 
 | Linux release | BBSC version | Connects to |
 |---|---|---|
-| **0.0.2.1** (current) | 0.0.2 | BBSC 0.0.2 players: Windows shadPS4, BBport, other 0.0.2.x Linux |
+| **0.0.2.2** (current) | 0.0.2 | BBSC 0.0.2 players: Windows shadPS4, BBport, other 0.0.2.x Linux |
+| 0.0.2.1 | 0.0.2 | same as 0.0.2.2, without the GPU-memory crash fix |
 | 0.0.1.3 | 0.0.1 | BBSC 0.0.1 players only |
 | 0.0.1.2 | 0.0.1 | BBSC 0.0.1 players only |
 
-If your partner is on the current upstream (0.0.2), use **0.0.2.1**. The 0.0.1.x builds stay up only for
+If your partner is on the current upstream (0.0.2), use **0.0.2.2**. The 0.0.1.x builds stay up only for
 people still playing with 0.0.1 partners.
 
 ## What's in the package
@@ -50,7 +51,7 @@ The build uses the same data folder as a normal Linux shadPS4:
 
 ```bash
 mkdir -p ~/Applications && cd ~/Applications
-tar xzf ~/Downloads/bbsc-linux-0.0.2.1-steamdeck.tar.gz
+tar xzf ~/Downloads/bbsc-linux-0.0.2.2-steamdeck.tar.gz
 cd bbsc-linux
 ./run-bbsc.sh /path/to/CUSA03173/eboot.bin
 ```
@@ -61,8 +62,9 @@ Launch Options. Do the Steam Deck settings and the online setup below before you
 **Before your first real session:** set `GPU.readbacks_mode: 1` in
 `~/.local/share/shadPS4/config.json`. This is **required** — without it the game draws huge triangles across the screen after deaths and area loads. The full Deck setup is under *Steam Deck settings* below, but this one setting applies to everyone.
 
-**Steam Deck:** also set the **UMA Frame Buffer to 4 GB** in BIOS before any long session -
-without it, heavy areas freeze the game. Steps under *Steam Deck settings*.
+**Steam Deck:** setting the **UMA Frame Buffer to 4 GB** in BIOS is the standard Deck emulation
+tweak and worth doing (steps under *Steam Deck settings*), but it is not a fix for freezes - see
+*Known issues*.
 
 ## Upgrade (drop-in binary swap)
 
@@ -71,8 +73,8 @@ Updates only replace the emulator binary. Config, saves, patches and your accoun
 ```bash
 pkill -9 -f shadps4-bbsc; sleep 1
 cd ~/Downloads
-sha256sum bbsc-linux-0.0.2.1-steamdeck.tar.gz        # compare with the hash on the release page
-tar xzf bbsc-linux-0.0.2.1-steamdeck.tar.gz
+sha256sum bbsc-linux-0.0.2.2-steamdeck.tar.gz        # compare with the hash on the release page
+tar xzf bbsc-linux-0.0.2.2-steamdeck.tar.gz
 DIR=$(dirname "$(find ~ /run/media -name shadps4-bbsc -type f 2>/dev/null | head -1)")
 cp "$DIR/shadps4-bbsc" "$DIR/shadps4-bbsc.bak"       # rollback copy
 cp bbsc-linux/shadps4-bbsc "$DIR/shadps4-bbsc"
@@ -120,7 +122,7 @@ These are the defaults; a privately hosted server may use others, but they never
 
 ## Playing with Windows / BBport friends
 
-Cross-play works (tested: Steam Deck on 0.0.2.1 ↔ BBport on Windows). Three things have to line up, and every failed session so far has been one of them:
+Cross-play works (tested: Linux 0.0.2.1 ↔ BBport on Windows, by a community pair; emulator↔emulator with a Linux side is not yet confirmed - reports welcome). Three things have to line up, and every failed session so far has been one of them:
 
 1. **Same BBSC version.** Everyone on 0.0.2 (see the version table at the top).
 
@@ -163,13 +165,13 @@ And the login result is in the main log (`shad_log.txt`, logging on): `grep -a '
 
 ## Steam Deck settings
 
-### BIOS: UMA Frame Buffer 4 GB (strongly recommended)
+### BIOS: UMA Frame Buffer 4 GB (recommended)
 
-Bloodborne's GPU working set is large, and the Deck ships with only 1 GB of memory dedicated to
-the GPU - the rest gets borrowed from system RAM under pressure. With the 1 GB default, heavy
-areas (Central Yharnam especially) can exhaust GPU memory and stall the graphics driver for
-minutes: the game freezes with no error anywhere. Giving the GPU 4 GB up front fixes it. It's a
-one-time, reversible firmware setting, and every Deck emulation guide recommends it.
+The Deck ships with 1 GB of memory carved out for the GPU; the rest is borrowed from system RAM
+on demand. Giving the GPU 4 GB up front is the standard tweak every Deck emulation guide
+recommends - fewer allocation stalls, slightly steadier frame times. It's a one-time, reversible
+firmware setting. (An earlier version of this README claimed it fixed the Central Yharnam freeze.
+It does not - that was an emulator bug, fixed in 0.0.2.2; see *Known issues*.)
 
 1. Power menu -> **Shut Down** (fully off, not sleep).
 2. Hold **Volume +**, press and release **Power**, keep holding Volume + until the boot menu.
@@ -182,14 +184,10 @@ Verify it took:
 cat /sys/class/drm/card*/device/mem_info_vram_total | head -1   # ~4294967296 = 4 GB
 ```
 
-`free -h` will now show ~12 GB instead of ~14 GB - that's the 3 GB moved to the GPU, which is the
-point. Nothing else on the Deck is affected. (Optional on top: CryoUtilities' recommended settings -
-16 GB swap, swappiness 1 - add headroom for the guest memory and help with stutter.)
-
-**If freezes come back months later, check this first.** Nothing guards a BIOS setting: a
-firmware update (sometimes bundled with a SteamOS update) can reset it to 1G. It's not every
-update and it's not frequent, but the symptom is unmistakable - Central Yharnam freezes again with
-no error. Run the `mem_info_vram_total` line above; if it reads ~1 GB, set it back to 4G.
+`free -h` will now show ~12 GB instead of ~14 GB - that's the 3 GB moved to the GPU. A firmware
+update can quietly reset it to 1G; the line above tells you in a second. Optional on top:
+CryoUtilities' 16 GB swap gives the host side headroom (keep swappiness at the SteamOS default of
+60 - the old "swappiness 1" advice predates SteamOS's zram and works against it now).
 
 Tested on a Steam Deck LCD: a steady 30 FPS at 1280x800 (GPU around 75-85%) with these shadPS4 patches
 on (`~/.local/share/shadPS4/patches/shadPS4/Bloodborne.xml`, `isEnabled="true"` on the patch's
@@ -302,10 +300,15 @@ From upstream 0.0.2 (still a test version - **back up your saves**):
 - Chalice Dungeons: no co-op inside them yet (solo works).
 - Frame-rate mismatch between players: elevators skipping, floating, falling through (see above).
 
-- **Freeze with no error in a heavy area (Central Yharnam), process alive but stuck:** GPU memory
-  starvation stalling the graphics driver. Fix: 4 GB UMA Frame Buffer in BIOS (see Steam Deck
-  settings). Signature: `free -h` shows under 1 GB available and `mem_info_vram_used` sits at the
-  1 GB ceiling; the GPU thread is stuck in the kernel and even `kill -9` takes minutes.
+- **Freeze with no error after ~45-60 minutes in a heavy area (Central Yharnam), then the game
+  closes by itself a couple of minutes later** - fixed in **0.0.2.2**. It was an emulator crash:
+  the GPU buffer cache never freed anything, the game's GPU footprint grew until the Vulkan memory
+  budget (VRAM *and* system RAM on a Deck, so the UMA setting made no difference) was exhausted,
+  and the next allocation failed with `ErrorOutOfDeviceMemory` and an assertion. The "freeze" was
+  systemd writing a 6 GB core dump. 0.0.2.2 evicts idle buffers under memory pressure, retries
+  allocations over budget instead of asserting, and turns core dumps off in `run-bbsc.sh`. If you
+  still see it on 0.0.2.2, the log line to look for is `buffer.cpp` / `Assertion Failed` in
+  `shad_log.txt` (logging on, `"sync": true`).
 - **Freeze the instant an external display disconnects** (USB-C AR glasses, a dock): gamescope
   switches to the internal screen and changes the game's mode, and the emulator doesn't survive
   it. Fix: in Steam, the game's Properties -> Game Resolution -> set it explicitly (1280x800 or

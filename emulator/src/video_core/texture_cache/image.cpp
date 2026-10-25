@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <ranges>
 #include "common/assert.h"
+#include "common/logging/log.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -113,6 +115,27 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
     VkImage unsafe_image{};
     VkResult result = vmaCreateImage(allocator, &image_ci_unsafe, &alloc_info, &unsafe_image,
                                      &allocation, nullptr);
+    if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY || result == VK_ERROR_OUT_OF_HOST_MEMORY) {
+        // Linux fork (2026-10-25): same as UniqueBuffer::Create - the memory budget is advisory,
+        // so retry over budget instead of asserting the game away. See buffer.cpp.
+        static std::atomic<u32> over_budget_warnings{0};
+        if (over_budget_warnings.fetch_add(1) < 8) {
+            LOG_WARNING(Render_Vulkan,
+                        "GPU memory budget exhausted allocating a {}x{} image ({}); retrying "
+                        "over budget",
+                        image_ci.extent.width, image_ci.extent.height,
+                        vk::to_string(vk::Result{result}));
+        }
+        VmaAllocationCreateInfo retry_info = alloc_info;
+        retry_info.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+        result = vmaCreateImage(allocator, &image_ci_unsafe, &retry_info, &unsafe_image,
+                                &allocation, nullptr);
+        if (result != VK_SUCCESS) {
+            retry_info.usage = VMA_MEMORY_USAGE_AUTO;
+            result = vmaCreateImage(allocator, &image_ci_unsafe, &retry_info, &unsafe_image,
+                                    &allocation, nullptr);
+        }
+    }
     ASSERT_MSG(result == VK_SUCCESS, "Failed allocating image with error {}",
                vk::to_string(vk::Result{result}));
     image = vk::Image{unsafe_image};
