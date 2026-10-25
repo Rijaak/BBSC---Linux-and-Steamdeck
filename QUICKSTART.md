@@ -125,12 +125,12 @@ folder.)
 
 ## 7. Your online account
 
-You made the account on seamlesshunt.com already. This tells the emulator about it, points the game
-at the community server, and writes the server files. Run it from the `bbsc-linux` folder:
+You made the account on seamlesshunt.com already. This tells the emulator about it, points the game at the community server, and writes the server files. **The game must be closed** (it rewrites config.json when it exits and would undo this). Run it from the `bbsc-linux` folder, with the
+password in single quotes so characters like `*`, `$` or `!` survive the shell:
 
 ```bash
 cd ~/Applications/bbsc-linux
-python3 bbsc-setup.py --server play.seamlesshunt.com:31313 --no-register --name <name> --password <password>
+python3 bbsc-setup.py --server play.seamlesshunt.com:31313 --no-register --name '<name>' --password '<password>'
 ```
 
 Use the exact name and password you registered with. Each player needs their **own** account - two
