@@ -188,8 +188,8 @@ BBport, or this Linux build) and on the **same server** (SeamlessHunt).
 
 | What you see | What it is | Do this |
 |---|---|---|
-| *"You are currently not signed into PlayStation Network"* at launch | Still "Unable to connect" after running the setup | The game was open when you ran it (it overwrote the config on exit), or your password has a `*`, `$`, `!` or quote in it | Close the game, rerun step 7 with the password in single quotes, as shown. |
-| The game didn't log in. Usually a typo in step 7, or Wi-Fi not up yet after a reboot. | Rerun step 7 with the right name/password; or just restart the game. |
+| *"You are currently not signed into PlayStation Network"* at launch | The game didn't log in. Usually a typo in step 7, or Wi-Fi not up yet after a reboot. | Rerun step 7 with the right name/password; or just restart the game. |
+| Still "Unable to connect" after running the setup | The game was open when you ran it (it overwrote the config on exit), or your password has a `*`, `$`, `!` or quote in it | Close the game, rerun step 7 with the password in single quotes, as shown. |
 | Giant coloured triangles after a death or load | `readbacks_mode` isn't 1 | Redo step 5 and check the grep output. |
 | Vanilla bells, no Hunt/Kin Bell | Kit not granted yet | Full quit, relaunch, load the character. |
 | No music or sound effects | The audio module isn't in place | Redo step 6 and check the `ls` shows `libSceNgs2.sprx`. |
