@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <span>
 #include <unordered_map>
 
@@ -445,6 +446,17 @@ public:
     /// Returns the total memory budget available to the device.
     [[nodiscard]] u64 GetTotalMemoryBudget() const {
         return total_memory_budget;
+    }
+
+    /// Linux fork (2026-10-26): the budget the buffer/texture cache collectors scale their
+    /// thresholds from. On an integrated GPU (Steam Deck) the Vulkan budget is shared with the
+    /// whole system; the collectors derived "critical" = 6.5 GB from an 8 GB budget, so GPU usage
+    /// settled at ~5 GB with ~0.5 GB of system RAM left, and Bloodborne crashed loading into
+    /// Central Yharnam. Cap it at 4 GB on integrated GPUs: usage settles around 3.3 GB.
+    [[nodiscard]] u64 GetCacheGcBudget() const {
+        constexpr u64 IntegratedCap = 4ULL << 30;
+        return IsIntegrated() ? std::min<u64>(total_memory_budget, IntegratedCap)
+                              : total_memory_budget;
     }
 
     /// Determines if a format is supported for a set of feature flags.

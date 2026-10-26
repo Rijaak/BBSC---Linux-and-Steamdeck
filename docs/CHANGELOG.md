@@ -3,6 +3,19 @@
 Changes made in this Linux fork, newest first. Versions are `<BBSC version>.<Linux revision>`.
 Upstream BBSC's own changelog is in the upstream repo: https://github.com/CLSAMG22/BBSC
 
+## 2026-10-26 - Linux fork 0.0.2.3: tighter GPU-memory limits on integrated GPUs (Steam Deck)
+
+- With 0.0.2.2 the buffer/texture cache collectors scaled their thresholds from the 8 GB Vulkan
+  budget the Deck reports (trigger 3.2 GB, critical 6.5 GB). GPU usage settled at ~5 GB with
+  ~0.5 GB of system RAM left, and after ~1 h the game crashed loading back into Central Yharnam
+  (`Unhandled access violation at code address 0x80263ba08: Write to address 0x8` on
+  `GXRenderThread` - a guest null write, upstream lists a GXRenderThread access violation as a
+  known crash; memory pressure is the suspected trigger).
+- `Instance::GetCacheGcBudget()` caps the budget the collectors use at 4 GB when the Vulkan device
+  type is `eIntegratedGpu` (trigger ~1.6 GB, critical ~3.2 GB). Discrete GPUs are unchanged.
+- README: known issue for a crashed game that cannot exit (crashed thread spinning in the kernel;
+  suspected transparent huge pages `always`; `madvise` workaround under test).
+
 ## 2026-10-25 - Linux fork 0.0.2.2: fix the ~1 hour "freeze" in heavy areas (GPU memory exhaustion); crash logs survive
 
 - Symptom: on the Steam Deck the game froze with no error after roughly 45-60 minutes in Central

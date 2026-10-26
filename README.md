@@ -17,12 +17,13 @@ BBSC version** - 0.0.1 and 0.0.2 clients cannot connect to each other.
 
 | Linux release | BBSC version | Connects to |
 |---|---|---|
-| **0.0.2.2** (current) | 0.0.2 | BBSC 0.0.2 players: Windows shadPS4, BBport, other 0.0.2.x Linux |
-| 0.0.2.1 | 0.0.2 | same as 0.0.2.2, without the GPU-memory crash fix |
+| **0.0.2.3** (current) | 0.0.2 | BBSC 0.0.2 players: Windows shadPS4, BBport, other 0.0.2.x Linux |
+| 0.0.2.2 | 0.0.2 | same, with looser GPU-memory limits on handhelds (Deck) |
+| 0.0.2.1 | 0.0.2 | same, without the GPU-memory crash fix |
 | 0.0.1.3 | 0.0.1 | BBSC 0.0.1 players only |
 | 0.0.1.2 | 0.0.1 | BBSC 0.0.1 players only |
 
-If your partner is on the current upstream (0.0.2), use **0.0.2.2**. The 0.0.1.x builds stay up only for
+If your partner is on the current upstream (0.0.2), use **0.0.2.3**. The 0.0.1.x builds stay up only for
 people still playing with 0.0.1 partners.
 
 ## What's in the package
@@ -51,7 +52,7 @@ The build uses the same data folder as a normal Linux shadPS4:
 
 ```bash
 mkdir -p ~/Applications && cd ~/Applications
-tar xzf ~/Downloads/bbsc-linux-0.0.2.2-steamdeck.tar.gz
+tar xzf ~/Downloads/bbsc-linux-0.0.2.3-steamdeck.tar.gz
 cd bbsc-linux
 ./run-bbsc.sh /path/to/CUSA03173/eboot.bin
 ```
@@ -73,8 +74,8 @@ Updates only replace the emulator binary. Config, saves, patches and your accoun
 ```bash
 pkill -9 -f shadps4-bbsc; sleep 1
 cd ~/Downloads
-sha256sum bbsc-linux-0.0.2.2-steamdeck.tar.gz        # compare with the hash on the release page
-tar xzf bbsc-linux-0.0.2.2-steamdeck.tar.gz
+sha256sum bbsc-linux-0.0.2.3-steamdeck.tar.gz        # compare with the hash on the release page
+tar xzf bbsc-linux-0.0.2.3-steamdeck.tar.gz
 DIR=$(dirname "$(find ~ /run/media -name shadps4-bbsc -type f 2>/dev/null | head -1)")
 cp "$DIR/shadps4-bbsc" "$DIR/shadps4-bbsc.bak"       # rollback copy
 cp bbsc-linux/shadps4-bbsc "$DIR/shadps4-bbsc"
@@ -309,6 +310,15 @@ From upstream 0.0.2 (still a test version - **back up your saves**):
   allocations over budget instead of asserting, and turns core dumps off in `run-bbsc.sh`. If you
   still see it on 0.0.2.2, the log line to look for is `buffer.cpp` / `Assertion Failed` in
   `shad_log.txt` (logging on, `"sync": true`).
+  0.0.2.3 tightens this further on integrated GPUs (Deck and other handhelds): the cleanup now
+  keeps GPU usage around 3.3 GB instead of ~5 GB, leaving system RAM free for area loads. With
+  ~5 GB used and ~0.5 GB of RAM left, 0.0.2.2 could still crash loading back into Central
+  Yharnam (`Unhandled access violation ... Write to address 0x8` on `GXRenderThread`).
+- **After a crash the game stays frozen on screen and `kill -9` does nothing; only a reboot
+  clears it.** The crashed thread is stuck inside the kernel while the process exits. Suspected
+  cause: the kernel's transparent huge pages set to `always`. Workaround under test, before
+  launching (lasts until reboot):
+  `echo madvise | sudo tee /sys/kernel/mm/transparent_hugepage/enabled`
 - **Freeze the instant an external display disconnects** (USB-C AR glasses, a dock): gamescope
   switches to the internal screen and changes the game's mode, and the emulator doesn't survive
   it. Fix: in Steam, the game's Properties -> Game Resolution -> set it explicitly (1280x800 or
