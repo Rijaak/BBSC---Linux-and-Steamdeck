@@ -35,6 +35,12 @@ import urllib.request
 import webbrowser
 import zipfile
 
+# LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): the Windows API calls this launcher makes for
+# optional things answer "not available" on Linux (bbport_linux_compat), before anything uses them.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bbport_linux_compat  # noqa: E402,F401
+from bbport_linux_compat import EXE, IS_WINDOWS  # noqa: E402
+
 FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
@@ -147,6 +153,11 @@ RESHADE_PRESET_PREFIX = 'Bloodborne - '  # the shipped presets; the dropdowns sh
 
 def attach_stdio():
     """A windowed executable starts without sys.stdout; inherited pipes or a console still exist."""
+    if not IS_WINDOWS:  # LINUX_FORK: a Linux executable always has its stdout and stderr
+        for name in ('stdout', 'stderr'):
+            if getattr(sys, name) is None:
+                setattr(sys, name, open(os.devnull, 'w'))
+        return
     import msvcrt
     for name, std in (('stdout', -11), ('stderr', -12)):
         if getattr(sys, name) is not None:
@@ -254,6 +265,16 @@ def coop_release_version():
     except (OSError, IndexError):
         return ''
     match = re.search(r'v(\d+\.\d+\.\d+\S*)', first)
+    return match.group(1) if match else ''
+
+
+def linux_build_version():
+    """LINUX_FORK: the Linux build's own number from VERSION.txt ("Linux build 1.0.0.1"), else ''."""
+    try:
+        text = (PORT_DIR / 'VERSION.txt').read_text(encoding='utf-8')
+    except OSError:
+        return ''
+    match = re.search(r'Linux build (\d+(?:\.\d+)+)', text)
     return match.group(1) if match else ''
 
 
@@ -774,13 +795,13 @@ def parse_upscaler_support(output):
 
 def gpu_tool():
     """(bb-gpu-capabilities.exe, the environment to run it with): the packaged copy, else out/."""
-    exe = PORT_DIR / 'bin' / 'bb-gpu-capabilities.exe'
+    exe = PORT_DIR / 'bin' / f'bb-gpu-capabilities{EXE}'
     if not exe.is_file():
-        exe = PORT_DIR / 'out' / 'bb-gpu-capabilities.exe'
+        exe = PORT_DIR / 'out' / f'bb-gpu-capabilities{EXE}'
     env = dict(os.environ)
     env['BB_FSR4VK_DIR'] = str(fsr4vk_dir())  # where the check looks for the experimental FSR 4.1.1 files
     env.pop('BB_FSR4VK', None)  # the check asks what the PC can run; the launcher's own switch decides the rest
-    if not (exe.parent / 'SDL3.dll').is_file():
+    if IS_WINDOWS and not (exe.parent / 'SDL3.dll').is_file():
         clang64 = Path(os.environ.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
         env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
     return exe, env
@@ -3450,7 +3471,7 @@ class Launcher:
         self.status = tk.Label(line, text='', bg=BG, fg=MUTED, font=self.fonts['small'], anchor='w', justify='left')
         self.status.pack(side='left')
         self.footer = footer
-        grip = tk.Canvas(footer, width=px(14), height=px(14), bg=BG, highlightthickness=0, bd=0, cursor='size_nw_se')
+        grip = tk.Canvas(footer, width=px(14), height=px(14), bg=BG, highlightthickness=0, bd=0, cursor='size_nw_se' if IS_WINDOWS else 'bottom_right_corner')
         for i in range(3):
             for j in range(i + 1):
                 x, y = px(12) - (i - j) * px(4), px(12) - j * px(4)
@@ -3856,7 +3877,7 @@ class Launcher:
         """bb-probe --prepare-map in the background, its lines moving the bar; then the 3D map is on
         (Prerendered) unless the player chose Live."""
         dvdroot, user = self.map_folders()
-        probe = PORT_DIR / 'bin' / 'bb-probe.exe'
+        probe = PORT_DIR / 'bin' / f'bb-probe{EXE}'
         if dvdroot is None or not probe.is_file():
             return
         self.preparing_map = True
@@ -7106,6 +7127,11 @@ class Launcher:
         """Helper thread: the newest release of this repository (every release, pre-releases too); a newer
         one shows the Update button, and with the automatic update switch on (at the start: AUTO) installs."""
         current = coop_release_version()
+        if not IS_WINDOWS:
+            # LINUX_FORK: the Linux releases are numbered <co-op release>.<Linux revision> (1.0.0.1);
+            # VERSION.txt's second line names it ("Linux build 1.0.0.1"), the first stays the co-op
+            # release the server checks.
+            current = linux_build_version() or current
         try:
             release = bbport_coop.update_offer(current, bbport_coop.fetch_newest_release())
             failure = None
@@ -7146,6 +7172,12 @@ class Launcher:
         silently into this folder (it keeps user\\ and starts the launcher again) and closes the launcher."""
         release = getattr(self, 'update_release', None)
         if not release or self.updating:
+            return
+        if not IS_WINDOWS:
+            # LINUX_FORK: no setup to run; the release page has the tarball and its upgrade steps.
+            webbrowser.open(release.get('page') or 'https://github.com/Rijaak/BBSC---Linux-and-Steamdeck/releases')
+            self.status.configure(text=_('Opened the release page: download it there.',
+                                         'Открыта страница выпуска: скачайте его там.'), fg=GOLD)
             return
         if self.process:
             self.status.configure(text=_('Close the game first: the update replaces its files.',
@@ -7355,13 +7387,17 @@ class Launcher:
                                                       'Steam запущен. Закройте Steam полностью, в том числе в области '
                                                       'уведомлений, и нажмите «Добавить в Steam» снова.'))
             return
-        if FROZEN:
+        icon = None
+        if FROZEN and not IS_WINDOWS:  # LINUX_FORK: run-game.sh starts the game the way Bloodborne.exe does
+            exe, options, icon = PORT_DIR / 'run-game.sh', '', PORT_DIR / 'launcher' / 'bloodborne.png'
+        elif FROZEN:
             exe, options = PORT_DIR / 'Bloodborne.exe', ''
         else:
             pythonw = Path(sys.executable).with_name('pythonw.exe')
             exe, options = pythonw if pythonw.exists() else Path(sys.executable), f'"{Path(__file__).resolve()}" --play'
         self.collect()  # Bloodborne.exe starts the game with the saved settings
-        done, failed = bbport_steam.add_to_accounts(steam, 'Bloodborne', str(exe), str(PORT_DIR), str(exe), options)
+        done, failed = bbport_steam.add_to_accounts(steam, 'Bloodborne', str(exe), str(PORT_DIR), str(icon or exe),
+                                                    options)
         if failed:
             text = _('Could not add the game to Steam: {}', 'Не удалось добавить игру в Steam: {}').format(
                 '; '.join(f'{path}: {error}' for path, error in failed))
@@ -7444,8 +7480,11 @@ def start_game(command, env, log_path):
             log.flush()
         except (OSError, ValueError):
             pass
+        # LINUX_FORK: its own process group on Linux, which GameJob follows and stops (the job object's
+        # part: the in-game restart's launch is in it too).
         return subprocess.Popen(command, cwd=PORT_DIR, env=env, stdin=subprocess.DEVNULL, stdout=log,
-                                stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+                                stderr=subprocess.STDOUT, creationflags=NO_WINDOW,
+                                start_new_session=not IS_WINDOWS)
 
 
 def follow_log(path, finished, emit, interval=0.05, retries=5):
@@ -7530,6 +7569,7 @@ class GameJob:
     by the in-game restart (no longer descendants of the first process)."""
 
     def __init__(self, process):
+        self.group = None if IS_WINDOWS else process.pid  # LINUX_FORK: the process group start_game made
         kernel32 = ctypes.windll.kernel32
         kernel32.CreateJobObjectW.restype = ctypes.c_void_p
         self.handle = kernel32.CreateJobObjectW(None, None)
@@ -7542,6 +7582,14 @@ class GameJob:
 
     def running(self):
         """Whether a process of the job is alive; None when the job could not be used."""
+        if self.group is not None:
+            try:
+                os.killpg(self.group, 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except OSError:
+                return None
         if not (self.handle and self.assigned):
             return None
         info = JobAccounting()
@@ -7551,6 +7599,13 @@ class GameJob:
         return info.ActiveProcesses > 0
 
     def terminate(self):
+        if self.group is not None:
+            import signal
+            try:
+                os.killpg(self.group, signal.SIGKILL)
+            except OSError:
+                pass
+            return
         if self.handle:
             ctypes.windll.kernel32.TerminateJobObject(ctypes.c_void_p(self.handle), 1)
 

@@ -13,6 +13,7 @@ import ctypes
 import os
 from pathlib import Path
 import struct
+import sys
 import zlib
 
 MAP, STRING, INT32, UINT64, END = 0, 1, 2, 7, 8
@@ -122,11 +123,17 @@ def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
 
 def steam_folder():
     """Steam's install folder from the registry, or None."""
+    if sys.platform != 'win32':  # LINUX_FORK: SteamOS and desktop Steam (native, then Flatpak)
+        for path in (Path.home() / '.local/share/Steam', Path.home() / '.steam/steam',
+                     Path.home() / '.var/app/com.valvesoftware.Steam/.local/share/Steam'):
+            if (path / 'userdata').is_dir():
+                return path.resolve()
+        return None
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Valve\Steam') as key:
             path = Path(winreg.QueryValueEx(key, 'SteamPath')[0])
-    except OSError:
+    except (ImportError, OSError):
         return None
     return path if path.is_dir() else None
 
@@ -141,6 +148,18 @@ def user_configs(steam):
 def steam_running():
     """Whether steam.exe is in the process list (read from a snapshot, no helper program started):
     True or False, or None when the list could not be read (then nothing is known)."""
+    if sys.platform != 'win32':  # LINUX_FORK: Steam's processes are named steam (and steamwebhelper)
+        try:
+            pids = [entry for entry in os.listdir('/proc') if entry.isdigit()]
+        except OSError:
+            return None
+        for pid in pids:
+            try:
+                if Path(f'/proc/{pid}/comm').read_text().strip() == 'steam':
+                    return True
+            except OSError:
+                pass
+        return False
     from ctypes import wintypes
 
     class ProcessEntry(ctypes.Structure):
