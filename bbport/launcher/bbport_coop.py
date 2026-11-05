@@ -28,6 +28,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+# LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): the native Linux build runs this module too.
+IS_WINDOWS = sys.platform == 'win32'
+EXE = '.exe' if IS_WINDOWS else ''
+
 # Every Bloodborne release, as the 01.09 eboot's own content-id table lists them: Japan, US, EU and Asia, each
 # with its Game of the Year edition.
 TITLE_IDS = ('CUSA03173', 'CUSA00207', 'CUSA00208', 'CUSA00900', 'CUSA03179', 'CUSA01363', 'CUSA03023',
@@ -878,7 +882,17 @@ def search_game(install, drives=None, homes=None, depth=5, budget_s=20.0, near=N
 def fixed_drives():
     """The PC's local drives (C:\\, D:\\ ...); network and removable ones are left out."""
     if sys.platform != 'win32':
-        return [Path('/')]
+        # Linux: removable and mounted drives (a Steam Deck's SD card is under /run/media/<user>), not
+        # the whole file system.
+        roots = []
+        for base in (Path('/run/media'), Path('/media'), Path('/mnt')):
+            try:
+                for entry in sorted(base.iterdir()):
+                    if entry.is_dir():
+                        roots.append(entry)
+            except OSError:
+                continue
+        return roots
     drives = []
     mask = ctypes.windll.kernel32.GetLogicalDrives()
     for index in range(26):
@@ -1053,10 +1067,10 @@ def junctions_work(folder):
     probe = folder / '.junction-probe'
     try:
         folder.mkdir(parents=True, exist_ok=True)
-        if is_junction(probe):
-            os.rmdir(probe)
+        if is_link(probe):
+            remove_link(probe)
         make_junction(probe, folder)
-        os.rmdir(probe)
+        remove_link(probe)
         return True
     except OSError:
         return False
@@ -1589,7 +1603,7 @@ def server_environment(host_ip, env=None):
 
 def server_command(install):
     """shadnet under its watchdog (phase 11): started again after a crash or a hang."""
-    return [str(Path(install) / 'server' / 'shadnet.exe'), '--watchdog']
+    return [str(Path(install) / 'server' / f'shadnet{EXE}'), '--watchdog']
 
 
 def start_servers(install, host_ip, wait_s=10.0):
@@ -1694,7 +1708,14 @@ def stop_order(found):
 def stop_servers(install):
     stopped = 0
     for pid, _name, _command in stop_order(our_processes(install)):
-        subprocess.run(['taskkill', '/PID', str(pid), '/F'], capture_output=True, creationflags=NO_WINDOW)
+        if IS_WINDOWS:
+            subprocess.run(['taskkill', '/PID', str(pid), '/F'], capture_output=True, creationflags=NO_WINDOW)
+        else:
+            import signal
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                continue
         stopped += 1
     return stopped
 
@@ -1920,6 +1941,8 @@ def firewall_commands(install, host):
 
 def firewall_ready(install, host):
     """Whether this install's rules are there (reading rules needs no administrator)."""
+    if not IS_WINDOWS:
+        return True  # Linux desktops and SteamOS have no firewall in the way by default
     probe = str(Path(install) / 'bin' / 'bb-probe.exe').lower()
     names = [RULE_GAME] + ([RULE_HOST_TCP, RULE_HOST_UDP] if host else [])
     for name in names:
@@ -1936,6 +1959,8 @@ def firewall_ready(install, host):
 def allow_through_firewall(install, host):
     """Asks Windows for the administrator once (the UAC prompt) and adds the rules. True when the
     player said yes (the rules are then checked again by the caller)."""
+    if not IS_WINDOWS:
+        return True
     command = ' & '.join(firewall_commands(install, host))
     result = ctypes.windll.shell32.ShellExecuteW(None, 'runas', 'cmd.exe', f'/c {command}', None, 0)
     return result > 32
@@ -1949,6 +1974,12 @@ def allow_through_firewall(install, host):
 # By repository id, not owner/name: the id survives a rename of the owner.
 RELEASES_API = 'https://api.github.com/repositories/1405692683/releases?per_page=100'  # every one: Home's notes
 SETUP_SUFFIX = '-setup.exe'
+# LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): Home's notes stay the release's own (above); the update
+# check looks at the Linux build's releases: a Linux tarball and its .sha256, opened in the browser to
+# install by hand (no setup .exe to run).
+LINUX_RELEASES_API = 'https://api.github.com/repos/Rijaak/BBSC---Linux-and-Steamdeck/releases?per_page=100'
+if not IS_WINDOWS:
+    SETUP_SUFFIX = '-linux.tar.gz'
 
 
 def version_key(version):
@@ -1986,9 +2017,9 @@ def newest_release(releases):
     return best
 
 
-def fetch_releases(timeout=15):
+def fetch_releases(timeout=15, api=RELEASES_API):
     """GitHub's /releases list as it is now (raises OSError or ValueError when it cannot be read)."""
-    request = urllib.request.Request(RELEASES_API, headers={'Accept': 'application/vnd.github+json',
+    request = urllib.request.Request(api, headers={'Accept': 'application/vnd.github+json',
                                                             'User-Agent': 'bloodborne-coop-launcher'})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode('utf-8'))
@@ -1996,7 +2027,7 @@ def fetch_releases(timeout=15):
 
 def fetch_newest_release(timeout=15):
     """newest_release() of what GitHub lists now (raises OSError or ValueError when it cannot be read)."""
-    return newest_release(fetch_releases(timeout))
+    return newest_release(fetch_releases(timeout, RELEASES_API if IS_WINDOWS else LINUX_RELEASES_API))
 
 
 # Home's patch notes (Kaniel 2026-10-20: every release's, from the latest back to the first) are the

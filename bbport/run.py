@@ -18,6 +18,10 @@ from struct import error as struct_error
 import sys
 
 PORT = Path(__file__).resolve().parent
+# LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): the same script starts the native Linux build
+# (bin/bb-probe, no .exe), with the settings run.sh gives a Linux game (see linux_environment).
+IS_WINDOWS = sys.platform == 'win32'
+EXE = '.exe' if IS_WINDOWS else ''
 # Direct memory (BB_DMEM_MB, MiB) of a render size above 1080p, where patches.py also enlarges the
 # graphics heap ("Increased Graphics Heap Sizes").
 FULL_HD_PIXELS = 1920 * 1080
@@ -79,6 +83,17 @@ def fail(message):
 
 
 def wait_for(pid):
+    if not IS_WINDOWS:
+        import time
+        for _ in range(300):  # 30 s, as WaitForSingleObject below
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            except PermissionError:
+                pass
+            time.sleep(0.1)
+        return
     kernel32 = ctypes.windll.kernel32
     SYNCHRONIZE = 0x00100000
     handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
@@ -89,6 +104,8 @@ def wait_for(pid):
 
 def no_console():
     """Started without a console (the launcher): console programs must not open their own."""
+    if not IS_WINDOWS:
+        return 0  # Popen's creationflags exist only on Windows
     return 0 if ctypes.windll.kernel32.GetConsoleWindow() else subprocess.CREATE_NO_WINDOW
 
 
@@ -300,6 +317,27 @@ def low_vram_budget_mb(vram):
 
 def physical_cores():
     """CPU cores, not threads (GetLogicalProcessorInformation); os.cpu_count() when unknown."""
+    if not IS_WINDOWS:
+        try:  # one entry per (physical id, core id)
+            cores = set()
+            physical = core = None
+            for line in Path('/proc/cpuinfo').read_text(encoding='utf-8', errors='replace').splitlines():
+                key, _, value = line.partition(':')
+                key, value = key.strip(), value.strip()
+                if key == 'physical id':
+                    physical = value
+                elif key == 'core id':
+                    core = value
+                elif not key and physical is not None and core is not None:
+                    cores.add((physical, core))
+                    physical = core = None
+            if physical is not None and core is not None:
+                cores.add((physical, core))
+            if cores:
+                return len(cores)
+        except OSError:
+            pass
+        return os.cpu_count() or 8
     try:
         from ctypes import wintypes
         size = wintypes.DWORD(0)
@@ -332,6 +370,56 @@ def coop_trace(env, config):
     """The co-op trace for a bug report: bbport.ini coop_trace=1, or BB_COOP_TRACE as given."""
     if ini_value(config, 'coop_trace') == '1':
         env.setdefault('BB_COOP_TRACE', '1')
+
+
+def glibcxx_level(library):
+    """The newest GLIBCXX_3.4.N symbol version a libstdc++ provides (N), 0 when unreadable."""
+    try:
+        data = Path(library).read_bytes()
+    except OSError:
+        return 0
+    return max((int(n) for n in re.findall(rb'GLIBCXX_3\.4\.(\d+)\x00', data)), default=0)
+
+
+def system_libstdcxx():
+    try:
+        out = subprocess.run(['/sbin/ldconfig', '-p'], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        out = ''
+    for line in out.splitlines():
+        if line.strip().startswith('libstdc++.so.6 ') and 'x86-64' in line:
+            return line.rsplit('=>', 1)[-1].strip()
+    for candidate in ('/usr/lib/libstdc++.so.6', '/usr/lib64/libstdc++.so.6', '/usr/lib/x86_64-linux-gnu/libstdc++.so.6'):
+        if Path(candidate).is_file():
+            return candidate
+    return ''
+
+
+def linux_environment(env, data, probe):
+    """What run.sh sets for a Linux game, kept where the player has not set it.
+    The drivers' shader caches keep the game's pipelines between sessions (Mesa's with more room
+    than its default; NVIDIA's without its cleanup). Write tracking stays on mprotect (BB_UFFD=0):
+    with userfaultfd the Steam Deck crashed four times in nine minutes (run.sh, 2026-10-04)."""
+    for key, value in (('__GL_SHADER_DISK_CACHE', '1'), ('__GL_SHADER_DISK_CACHE_SKIP_CLEANUP', '1'),
+                       ('__GL_SHADER_DISK_CACHE_SIZE', '10737418240'), ('MESA_SHADER_CACHE_MAX_SIZE', '4G'),
+                       ('BB_UFFD', '0')):
+        env.setdefault(key, value)
+    # Started from the frozen launcher, the library path is PyInstaller's (its _internal folder, for the
+    # launcher's own libraries): the game gets the one the launcher was started with.
+    if getattr(sys, 'frozen', False):
+        original = env.pop('LD_LIBRARY_PATH_ORIG', None)
+        if original:
+            env['LD_LIBRARY_PATH'] = original
+        else:
+            env.pop('LD_LIBRARY_PATH', None)
+    # The bundled C++ runtime (bin/lib/cxx) only when the system's is older than the one the game was
+    # built against: a newer system one must win, the GPU driver loaded into the game may need it.
+    cxx = probe.parent / 'lib' / 'cxx'
+    bundled = cxx / 'libstdc++.so.6'
+    if bundled.is_file() and glibcxx_level(bundled) > glibcxx_level(system_libstdcxx()):
+        env['LD_LIBRARY_PATH'] = os.pathsep.join(filter(None, [str(cxx), env.get('LD_LIBRARY_PATH', '')]))
+        print(f'C++ runtime: the bundled one (the system has GLIBCXX_3.4.{glibcxx_level(system_libstdcxx())})')
+    # SDL picks Wayland or X11 itself; gamescope (Steam's game mode) is an X11 server for games.
 
 
 def find_executable(name):
@@ -371,11 +459,13 @@ def main():
     if not env.get('BB_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['BB_FSR411_DIR'] = str(data / 'fsr4_411')
 
-    probe = Path(env['BB_PROBE']) if env.get('BB_PROBE') else find_executable('bb-probe.exe')
+    probe = Path(env['BB_PROBE']) if env.get('BB_PROBE') else find_executable(f'bb-probe{EXE}')
     if not probe or not probe.is_file():
-        fail('bb-probe.exe not found: build it with build.sh (MSYS2 CLANG64) or use a packaged build.')
+        fail(f'bb-probe{EXE} not found: build it with build.sh or use a packaged build.')
+    if not IS_WINDOWS:
+        linux_environment(env, data, probe)
     # Development builds run from the MSYS2 tree: its CLANG64 DLLs (SDL3, FFmpeg, ...).
-    if not (probe.parent / 'SDL3.dll').is_file():
+    elif not (probe.parent / 'SDL3.dll').is_file():
         clang64 = Path(env.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
         if clang64.is_dir():
             env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
@@ -399,7 +489,7 @@ def main():
         except ImportError as error:  # nothing about the icons may stop the game from starting
             decided = {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
         else:
-            tool = probe.parent / 'bb-gpu-capabilities.exe'
+            tool = probe.parent / f'bb-gpu-capabilities{EXE}'
             decided = button_icons.environment(game, out, button_icons.read_ini(config),
                                                env.get('BB_MODS_DIR', data / 'mods'),
                                                env.get('BB_MODS_CONFIG', data / 'mods.json'),
@@ -434,7 +524,7 @@ def main():
         import button_icons
         env['BB_ICONS_SET'] = 'playstation' if env.get('BB_ICONS', '1') == '0' else button_icons.icon_set(
             button_icons.read_ini(config), env.get('BB_GAMEPAD', ''),
-            lambda: button_icons.list_gamepads(probe.parent / 'bb-gpu-capabilities.exe'))
+            lambda: button_icons.list_gamepads(probe.parent / f'bb-gpu-capabilities{EXE}'))
     except Exception:  # nothing about the icons may stop the game from starting
         env['BB_ICONS_SET'] = 'playstation'
     # The view belongs to this process, which lasts for the whole game: a later launch removes it if this one is
@@ -506,7 +596,7 @@ def main():
         scaled_render = scaled_output = None
         # The output as the game resolves it (BbSettings::ResolveOutput): its display's desktop and its
         # window mode (borderless takes the desktop's shape), so the scene patch has the game's shape.
-        caps = probe.parent / 'bb-gpu-capabilities.exe'
+        caps = probe.parent / f'bb-gpu-capabilities{EXE}'
         desktop = game_desktop(env, caps)
         window_mode = game_window_mode(config, env)
         shape = ('--desktop', desktop, '--window-mode', window_mode)
@@ -548,7 +638,7 @@ def main():
         if scaled:
             print(f'Output {scaled_output}: scene {scaled_render}, direct memory {env["BB_DMEM_MB"]} MiB '
                   '(live_resolution=1: live changes)')
-        vram = low_vram_mb(env, probe.parent / 'bb-gpu-capabilities.exe')
+        vram = low_vram_mb(env, probe.parent / f'bb-gpu-capabilities{EXE}')
         if vram:
             env.setdefault('BB_GC_BUDGET_MB', str(low_vram_budget_mb(vram)))
             notes = [f'texture budget {env["BB_GC_BUDGET_MB"]} MiB']
@@ -594,8 +684,14 @@ def main():
         if env.get('BB_ONLINE') == '1':
             online_overrides(env, user_dir)
         this = ['--run'] if getattr(sys, 'frozen', False) else [str(Path(__file__).resolve())]
-        restart = [sys.executable, *this, '--after', str(os.getpid()), *args]
-        env['BB_RESTART_COMMAND'] = subprocess.list2cmdline(restart)
+        if IS_WINDOWS:
+            restart = [sys.executable, *this, '--after', str(os.getpid()), *args]
+            env['BB_RESTART_COMMAND'] = subprocess.list2cmdline(restart)
+        else:
+            # The game execs this shell command in its own process (src/probe.c): same process id,
+            # so nothing to wait for; the working folder is the game's, so the paths are absolute.
+            import shlex
+            env['BB_RESTART_COMMAND'] = shlex.join([sys.executable, *this, *args])
         command = [str(probe), str(out / 'boot-linked.bin'), '--content-profile', str(out / 'content.bin'),
                    '--patches', str(out / 'patches.bin'), '--app0', str(game),
                    '--user', str(user_dir),

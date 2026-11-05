@@ -511,6 +511,13 @@ void runtime_restart(void) {
     runtime_restarting = 1;
     __sync_synchronize();
     syscall(SYS_close_range, 3u, ~0u, 0u);
+    /* LINUX_FORK: run.py (the launcher's start) gives its own command line, a shell command;
+     * exec keeps this process id, so it has no --after to wait for. run.sh otherwise. */
+    const char *command=getenv("BB_RESTART_COMMAND");
+    if (command && *command) {
+        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+        perror("runtime_restart: exec /bin/sh");
+    }
     execlp("bash", "bash", "run.sh", (char *)NULL);
     perror("runtime_restart: exec");
     _exit(1);

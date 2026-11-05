@@ -363,6 +363,15 @@ if (WIN32)
     target_include_directories(bbgpu PRIVATE third_party/xbyak)
     target_link_libraries(bbgpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm)
 else()
+    # LINUX_FORK: the bundled xbyak, as on Windows (no system copy needed).
+    target_include_directories(bbgpu PRIVATE third_party/xbyak)
+    # LINUX_FORK: texture_cache.h uses absl::flat_hash_map/set, whose hashing is compiled code.
+    find_package(absl REQUIRED)
+    target_link_libraries(bbgpu PRIVATE absl::flat_hash_map absl::flat_hash_set absl::hash)
+    # LINUX_FORK: release builds link a minimal static FFmpeg (packaging/linux/build-ffmpeg.sh);
+    # its symbols stay inside libbbgpu.so (its x86 assembly needs that, and nothing else sees them).
+    target_link_options(bbgpu PRIVATE
+        -Wl,--exclude-libs,libavformat.a:libavcodec.a:libavutil.a:libswscale.a:libswresample.a)
     target_link_libraries(bbgpu PUBLIC PkgConfig::X11)
 endif()
 
