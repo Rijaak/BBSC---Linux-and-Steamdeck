@@ -294,6 +294,8 @@ bool AvPlayerSource::Start() {
             m_audio_buffers.Push(GuestBuffer(m_memory_replacement, 0x10, size, false));
         }
     }
+    m_video_decoder_done = false;
+    m_audio_decoder_done = false;
     m_demuxer_thread.Run([this](std::stop_token stop) { this->DemuxerThread(stop); });
     m_video_decoder_thread.Run([this](std::stop_token stop) { this->VideoDecoderThread(stop); });
     m_audio_decoder_thread.Run([this](std::stop_token stop) { this->AudioDecoderThread(stop); });
@@ -599,12 +601,19 @@ void AvPlayerSource::DemuxerThread(std::stop_token stop) {
     m_video_buffers_cv.Notify();
     m_audio_buffers_cv.Notify();
 
-    m_video_decoder_thread.Join();
-    m_audio_decoder_thread.Join();
-    m_state.OnEOF();
+    // LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck, from its 0.0.2.4 fix): wait for the decoders
+    // to drain instead of joining their threads. Joining them here while sceAvPlayerStop on the
+    // game thread (skipping or ending the title movie) joined the same threads through Stop()
+    // gave one thread two joiners: the game froze on its way back to the title screen, every
+    // thread asleep. Now only Stop() and the destructor join these threads.
+    while (!stop.stop_requested() && !(m_video_decoder_done && m_audio_decoder_done)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (!stop.stop_requested()) {
+        m_state.OnEOF();
+    }
 
     LOG_INFO(Lib_AvPlayer, "Demuxer Thread exited normally");
-    m_demuxer_thread.Join();
 }
 
 AvPlayerSource::AVFramePtr AvPlayerSource::ConvertVideoFrame(const AVFrame& frame) {
@@ -699,6 +708,11 @@ Frame AvPlayerSource::PrepareVideoFrame(GuestBuffer buffer, const AVFrame& frame
 }
 
 void AvPlayerSource::VideoDecoderThread(std::stop_token stop) {
+    // LINUX_FORK: tells the demuxer this decoder is done, however it leaves.
+    struct DoneFlag {
+        std::atomic_bool& done;
+        ~DoneFlag() { done = true; }
+    } done_flag{m_video_decoder_done};
     using namespace std::chrono;
     Common::SetCurrentThreadName("shadPS4:AvVideoDecoder");
 
@@ -760,7 +774,6 @@ void AvPlayerSource::VideoDecoderThread(std::stop_token stop) {
     }
 
     LOG_INFO(Lib_AvPlayer, "Video Decoder Thread exited normally");
-    m_video_decoder_thread.Join();
 }
 
 AvPlayerSource::AVFramePtr AvPlayerSource::ConvertAudioFrame(const AVFrame& frame) {
@@ -822,6 +835,11 @@ Frame AvPlayerSource::PrepareAudioFrame(GuestBuffer buffer, const AVFrame& frame
 }
 
 void AvPlayerSource::AudioDecoderThread(std::stop_token stop) {
+    // LINUX_FORK: tells the demuxer this decoder is done, however it leaves.
+    struct DoneFlag {
+        std::atomic_bool& done;
+        ~DoneFlag() { done = true; }
+    } done_flag{m_audio_decoder_done};
     using namespace std::chrono;
     Common::SetCurrentThreadName("shadPS4:AvAudioDecoder");
 
@@ -879,7 +897,6 @@ void AvPlayerSource::AudioDecoderThread(std::stop_token stop) {
     }
 
     LOG_INFO(Lib_AvPlayer, "Audio Decoder Thread exited normally");
-    m_audio_decoder_thread.Join();
 }
 
 bool AvPlayerSource::HasRunningThreads() const {
