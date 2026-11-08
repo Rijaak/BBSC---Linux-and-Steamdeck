@@ -1214,7 +1214,12 @@ def save_files(user):
     files = {}
 
     def add_tree(folder):
-        for path in sorted(folder.rglob('*')):
+        # LINUX_FORK: os.walk follows linked folders (a save folder linked to an older install's,
+        # README-Linux.txt); Path.rglob does not before Python 3.13.
+        found = []
+        for root, _dirs, names in os.walk(folder, followlinks=True):
+            found += [Path(root) / name for name in names]
+        for path in sorted(found):
             if path.is_file():
                 files[path.relative_to(user).as_posix()] = path.read_bytes()
     if (user / 'savedata').is_dir():
@@ -1289,6 +1294,23 @@ def prune_launcher_backups(install, kept=KEPT_LAUNCHER_BACKUPS):
     return removed
 
 
+def clear_keeping_links(folder):
+    """LINUX_FORK: empties a save folder for a restore, keeping its linked folders (README-Linux.txt,
+    "Using your old save folder": user/savedata/1 a link to an older install's saves): their files
+    go, the links and what they point to stay, so the restore writes through them."""
+    folder = Path(folder)
+    if not folder.is_dir():
+        return
+    for child in folder.iterdir():
+        if child.is_symlink() and child.is_dir():
+            clear_keeping_links(child)
+        elif child.is_dir():
+            clear_keeping_links(child)
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            child.unlink(missing_ok=True)
+
+
 def restore_saves(install, name):
     """Puts backup `name` back as the saves (the game must not run). The saves as they were are kept
     first as a launcher backup, so a restore can be undone. Returns that backup's path, or None when
@@ -1301,7 +1323,7 @@ def restore_saves(install, name):
         raise ValueError(f'backup {name} holds no saves')
     safety = back_up_saves(install, f'before restoring {name}', prune=False)
     for folder in [user / 'savedata'] + sorted((user / 'home').glob('*/savedata')):
-        shutil.rmtree(folder, ignore_errors=True)
+        clear_keeping_links(folder)
     for party in user.glob('bloodborne_party_*.txt'):
         party.unlink(missing_ok=True)
     for relative, data in files.items():
