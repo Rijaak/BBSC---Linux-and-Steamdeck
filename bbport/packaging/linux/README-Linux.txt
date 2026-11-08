@@ -40,3 +40,28 @@ HOSTING
 
 WHERE THINGS ARE
   Saves, settings and logs: user/ in this folder. The game's log: user/log/.
+  Saves: user/savedata/1/CUSA03173/ (the game backs them up to user/save-backups/ every 10 min).
+
+USING YOUR OLD SAVE FOLDER (shadPS4, the 0.0.x Linux builds, another install)
+  This build keeps its own saves in user/savedata/1. To play from the saves you already have,
+  either copy them (BLauncher: Import saves) or make user/savedata/1 a link to your old folder,
+  so both installs use the same saves. The link works with the game's backups and with
+  BLauncher's Restore. In Konsole, with the game and BLauncher closed:
+
+  1. Find the folder that holds your CUSA03173 folder. For shadPS4 it is usually one of:
+       ls ~/.local/share/shadPS4/savedata/1/
+       ls ~/.local/share/shadPS4/home/1000/savedata/
+     (on the SD card, an EmuDeck install may keep it under Emulation/saves/ instead).
+  2. Back up both first:
+       cp -a ~/.local/share/shadPS4/savedata ~/savedata-backup-$(date +%Y%m%d)
+  3. Go to this folder and replace user/savedata/1 with a link to the old folder (change the path
+     after "ln -s" to the folder from step 1, the one that holds CUSA03173):
+       cd "/path/to/Yharnam Together"
+       mkdir -p user/savedata
+       [ -e user/savedata/1 ] && mv user/savedata/1 user/savedata/1.before-link
+       ln -s ~/.local/share/shadPS4/savedata/1 user/savedata/1
+       ls user/savedata/1/      (should list CUSA03173)
+  To undo: rm user/savedata/1 (removes only the link) and mv user/savedata/1.before-link user/savedata/1.
+
+  Notes: use one install at a time on the same saves, never both running together. This build also
+  writes small SPRJ*.sce_sys folders beside the saves (their names and icons): leave them.
