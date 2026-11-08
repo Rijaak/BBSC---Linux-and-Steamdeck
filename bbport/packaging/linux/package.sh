@@ -23,6 +23,12 @@ python=${PYTHON:-$PWD/../../pyenv/bin/python}
 if ldd out/gpu/libbbgpu.so | grep -q libavcodec; then
     echo 'libbbgpu.so uses the shared FFmpeg: build packaging/linux/build-ffmpeg.sh first, then build.sh with its PKG_CONFIG_PATH' >&2; exit 1
 fi
+# SDL3 must have a real display (X11, Wayland): one built without their headers runs the game in an
+# invisible window (the "dummy" and "offscreen" drivers only).
+sdl=$(ldd out/bb-probe | awk '/libSDL3/{print $3}')
+if [[ $(strings "$sdl" | grep -c 'libX11\.so\|libwayland-client\.so') -lt 2 ]]; then
+    echo "$sdl has no X11 or Wayland support: rebuild SDL3 with their development packages" >&2; exit 1
+fi
 [[ -f $windows/event-reference.json ]] || { echo "$windows is not the Windows package" >&2; exit 1; }
 
 name=YharnamTogether-$version-linux
@@ -44,6 +50,9 @@ done
     --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.filedialog \
     --hidden-import tkinter.messagebox "${hidden[@]}" launcher/bbport_launcher_win.py
 cp -a out/pyi-dist/BLauncher/. "$stage/"
+# Tk's fonts come from the system's fontconfig: a bundled older one rejects a newer system's font
+# settings (SteamOS 3.7: a screenful of "Fontconfig warning" lines). Every desktop Linux has it.
+rm -f "$stage"/_internal/libfontconfig.so* "$stage"/_internal/libfreetype.so*
 
 # --- the game -----------------------------------------------------------------------------------
 install -m755 out/bb-probe out/bb-gpu-capabilities "$stage/bin/"
