@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <cstring>
 #include <sys/uio.h>
+#include <algorithm>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -41,11 +43,42 @@ constexpr u64 ImageBase = 0x800000000ull;
 
 /// Makes [address, address + size) of the game's code writable; Restore puts the protection back
 /// (read-execute on Linux, the one it had on Windows) and flushes the instruction cache there.
+#ifndef _WIN32
+/// LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): the protection of the mapping holding `address`
+/// (/proc/self/maps), -1 when none holds it. Restore puts this back, as VirtualProtect's previous
+/// value does on Windows: the hooks go in while the image is still read-write (the loader's
+/// patches come after them, bbcoop later still), and a read-execute page there made the loader's
+/// next patch write into it fault (1.4.0 on a Steam Deck: SIGSEGV in apply_patches).
+int MappingProtection(u64 address) {
+    FILE* maps = std::fopen("/proc/self/maps", "r");
+    if (!maps) {
+        return -1;
+    }
+    char line[512];
+    int protection = -1;
+    while (std::fgets(line, sizeof(line), maps)) {
+        unsigned long long start = 0, end = 0;
+        char perms[8]{};
+        if (std::sscanf(line, "%llx-%llx %7s", &start, &end, perms) == 3 && address >= start &&
+            address < end) {
+            protection = (perms[0] == 'r' ? PROT_READ : 0) | (perms[1] == 'w' ? PROT_WRITE : 0) |
+                         (perms[2] == 'x' ? PROT_EXEC : 0);
+            break;
+        }
+    }
+    std::fclose(maps);
+    return protection;
+}
+#endif
+
 struct CodeWrite {
     void* page = nullptr;
     std::size_t span = 0;
 #ifdef _WIN32
     DWORD previous = 0;
+#else
+    std::vector<int> previous; // per page, from /proc/self/maps
+    long page_size = 0;
 #endif
     bool Open(u64 address, std::size_t size) {
 #ifdef _WIN32
@@ -53,9 +86,14 @@ struct CodeWrite {
         span = size;
         return VirtualProtect(page, span, PAGE_EXECUTE_READWRITE, &previous) != 0;
 #else
-        const long page_size = sysconf(_SC_PAGESIZE);
+        page_size = sysconf(_SC_PAGESIZE);
         page = reinterpret_cast<void*>(address & ~u64(page_size - 1));
         span = (address + size) - reinterpret_cast<u64>(page);
+        previous.clear();
+        for (u64 at = reinterpret_cast<u64>(page); at < address + size; at += u64(page_size)) {
+            const int protection = MappingProtection(at);
+            previous.push_back(protection < 0 ? PROT_READ | PROT_EXEC : protection);
+        }
         return mprotect(page, span, PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
 #endif
     }
@@ -65,7 +103,12 @@ struct CodeWrite {
         VirtualProtect(page, span, previous, &unused);
         FlushInstructionCache(GetCurrentProcess(), page, span);
 #else
-        mprotect(page, span, PROT_READ | PROT_EXEC);
+        for (std::size_t index = 0; index < previous.size(); ++index) {
+            auto* at = static_cast<unsigned char*>(page) + index * std::size_t(page_size);
+            const std::size_t bytes = std::min<std::size_t>(std::size_t(page_size), span - index * std::size_t(page_size));
+            mprotect(at, bytes, previous[index]);
+        }
+        __builtin___clear_cache(static_cast<char*>(page), static_cast<char*>(page) + span);
 #endif
     }
 };

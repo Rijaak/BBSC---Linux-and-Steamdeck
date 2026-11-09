@@ -811,12 +811,29 @@ bool PatchInt3(u64 address, std::initializer_list<unsigned char> expected) {
         return false;
     }
     void* page = reinterpret_cast<void*>(address & ~(PageSize - 1));
+    // LINUX_FORK: the page's own protection goes back (it is read-write while the loader still
+    // patches the image), not read-execute (see CodeWrite in bbport_guest_hooks.cpp).
+    int previous = PROT_READ | PROT_EXEC;
+    if (FILE* maps = std::fopen("/proc/self/maps", "r")) {
+        char line[512];
+        while (std::fgets(line, sizeof(line), maps)) {
+            unsigned long long start = 0, end = 0;
+            char perms[8]{};
+            if (std::sscanf(line, "%llx-%llx %7s", &start, &end, perms) == 3 &&
+                reinterpret_cast<unsigned long long>(page) >= start && reinterpret_cast<unsigned long long>(page) < end) {
+                previous = (perms[0] == 'r' ? PROT_READ : 0) | (perms[1] == 'w' ? PROT_WRITE : 0) |
+                           (perms[2] == 'x' ? PROT_EXEC : 0);
+                break;
+            }
+        }
+        std::fclose(maps);
+    }
     if (mprotect(page, PageSize, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
         return false;
     }
     __atomic_store_n(reinterpret_cast<unsigned char*>(address), static_cast<unsigned char>(0xcc),
                      __ATOMIC_SEQ_CST);
-    mprotect(page, PageSize, PROT_READ | PROT_EXEC);
+    mprotect(page, PageSize, previous);
     return true;
 }
 
