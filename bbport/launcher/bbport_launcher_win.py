@@ -3490,6 +3490,8 @@ class Launcher:
                         bg=BG).pack(side='left', padx=(px(8), 0))
             self.coop_server_line = self.label(row, '', 'small', MUTED, bg=BG)
             self.coop_server_line.pack(side='left', padx=(px(12), 0))
+            if not IS_WINDOWS:  # LINUX_FORK: no server of its own to start (coop_server_row_follows)
+                row.pack_forget()
         line = tk.Frame(left, bg=BG)
         line.pack(side='top', anchor='w', pady=(px(8), 0))
         self.busy = Spinner(self, line, 16, BG)
@@ -4726,7 +4728,8 @@ class Launcher:
         row = getattr(self, 'server_row', None)
         if row is None:
             return
-        if self.coop.get('server_type') == 'global':
+        # LINUX_FORK: the Linux build has no server of its own to start (shadnet is Windows-only for now).
+        if self.coop.get('server_type') == 'global' or not IS_WINDOWS:
             row.pack_forget()
         elif not row.winfo_manager():
             row.pack(side='left', padx=(self.px(14), 0))

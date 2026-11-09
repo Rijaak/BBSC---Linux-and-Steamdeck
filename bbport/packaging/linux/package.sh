@@ -96,7 +96,7 @@ done
 cp -a packaging/linux/README-Linux.txt packaging/linux/run-game.sh "$stage/"
 chmod +x "$stage/run-game.sh"
 release=$(echo "$version" | cut -d. -f1-3)
-printf 'BBSC: Yharnam Together v%s (Linux, Bloodborne PC native port)\nLinux build %s\nBuilt: %s\nSource: https://github.com/Rijaak/BBSC---Linux-and-Steamdeck\n' \
+printf 'Yharnam Together: Bloodborne Seamless Co-op v%s (Linux, Bloodborne PC native port)\nLinux build %s\nBuilt: %s\nSource: https://github.com/Rijaak/BBSC---Linux-and-Steamdeck\n' \
     "$release" "$version" "$(date -u '+%Y-%m-%d %H:%M UTC')" > "$stage/VERSION.txt"
 cp -a "$windows/portable.txt" "$stage/"
 sed -i 's/BLauncher.exe/BLauncher/g; s/user\\/user\//g' "$stage/portable.txt"
