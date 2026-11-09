@@ -7321,7 +7321,10 @@ class Launcher:
             pythonw = Path(sys.executable).with_name('pythonw.exe')
             exe, options = pythonw if pythonw.exists() else Path(sys.executable), f'"{Path(__file__).resolve()}" --play'
         self.collect()  # Bloodborne.exe starts the game with the saved settings
-        done, failed = bbport_steam.add_to_accounts(steam, 'Bloodborne', str(exe), str(PORT_DIR), str(icon or exe),
+        # LINUX_FORK: the shortcut's name on Linux, as the player's own Steam Deck one has it; an entry of
+        # that name is updated (pointed at this install, its artwork and play time kept), not doubled.
+        name = 'Bloodborne' if IS_WINDOWS else 'Bloodborne BBSC~Yarnham Together'
+        done, failed = bbport_steam.add_to_accounts(steam, name, str(exe), str(PORT_DIR), str(icon or exe),
                                                     options)
         if failed:
             text = _('Could not add the game to Steam: {}', 'Не удалось добавить игру в Steam: {}').format(
@@ -7333,6 +7336,13 @@ class Launcher:
             self.messagebox.showerror('Bloodborne', text)
             return
         added = sum(result == 'added' for _path, result in done)
+        if not IS_WINDOWS:  # LINUX_FORK: the shortcut's name and the dated backups
+            self.messagebox.showinfo('Bloodborne', _(
+                '"{}" is in your Steam library: {} added, {} updated (an existing shortcut of that name keeps its '
+                'artwork and play time). It starts with the settings saved in this launcher. No other shortcut is '
+                'changed, and shortcuts.vdf as it was is kept beside it as shortcuts.vdf.<date-time>.yt.bak.'
+            ).format(name, added, len(done) - added))
+            return
         self.messagebox.showinfo('Bloodborne', _('Bloodborne is in your Steam library: {} added, {} updated (one shortcut per Steam '
                              'account on this PC). It starts with the settings saved in this launcher. An existing '
                              'shortcuts.vdf is kept as shortcuts.vdf.bak.',
