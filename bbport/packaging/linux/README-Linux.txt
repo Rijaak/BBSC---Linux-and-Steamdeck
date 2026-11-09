@@ -29,12 +29,65 @@ STEAM DECK GAME MODE
   program.
 
 STEAM DECK SETTINGS
-  Settings > General: Output 1280 x 800 (16:10), the Deck's screen; Frame rate 30 FPS; Upscaler
-  FSR 3.1 or TAA (FSR 4 is slow on the Deck's GPU); Borderless. The "Light Grid" patch that matches
-  the output (1280x800, 1080p, 1440p, 4K) goes in by itself: no need to tick it; bbport.ini
-  light_grid=0 leaves it out. Game & effects: Motion blur, Depth of field, Chromatic aberration and
-  Dynamic light shadows off; SSAO on. Play from Game Mode (BLauncher: Add to Steam): in Desktop
-  Mode, Steam's desktop controller layout also sends keys to the game.
+  A starting point for the Steam Deck (LCD), from the shadPS4 builds' tested set (a steady 30 FPS at
+  1280x800) carried over to this port. Settings in BLauncher; the game reads them at start.
+
+  General
+    Output              1280 x 800 (16:10)   The Deck's own screen: nothing is scaled twice, and the
+                                             HUD sits at the screen's edges.
+    Frame rate          30 FPS (as on PS4)   What the Deck holds steadily; 60 is recommended in co-op
+                                             but the Deck rarely keeps it. Mixed frame rates in a
+                                             team work (the game sends its state at each one's rate).
+    Upscaler            FSR 3.1              FSR 4 is slow on the Deck's GPU (no INT8 dot products).
+    Preset              Native AA (x1.0)     Draws at 1280x800, as the shadPS4 setup did; FSR 3.1
+                                             only smooths edges. Not holding 30: Quality (x1.5,
+                                             ~854x534), then Balanced.
+    Window              Borderless (full screen)
+    Map > 3D map        Prerendered; press Prepare the 3D map once (a few minutes, ~140 MB).
+
+  Graphics
+    Live resolution changes   Off (faster)   The output is set by a patch at start; the Deck never
+                                             changes it in the game, so "On" would only cost FPS.
+    Light grid                Auto           The community 1280x800 "Light Grid For SteamDeck" patch
+                                             at that output (fewer light-grid draw calls, faster);
+                                             the game's own grid at any other. Lights missing or cut
+                                             off near the screen's edges: choose "The game's own".
+    Sharpening                On, 0.50       Lower it if Native AA looks too crisp.
+    Object motion vectors     as it is       Off by itself on AMD graphics (the Deck's): it cost
+                                             frame rate there.
+    Frame generation          Off            Needs 60 FPS or more to look right.
+    Model detail (LOD)        As in the game Lower (1) is a cheap gain if 30 is not held.
+    Show the FPS counter      On while tuning, off after.
+
+  Display & FPS
+    Frames ahead of the GPU   1 (default)    Even frame pacing; 2 can add FPS when the GPU is the
+                                             limit, with a little more input lag.
+    Presentation              FIFO (VSync)   30 FPS on a 60 Hz screen: each frame shown for exactly
+                                             two refreshes, the most even 30. (Mailbox is for high
+                                             frame rates; Game Mode's gamescope may use FIFO anyway.)
+    HDR output                Off            The LCD Deck has no HDR.
+
+  Game & effects
+    Motion blur, Depth of field, Chromatic aberration, Dynamic light shadows: off. The expensive
+    effects, as in the shadPS4 set ("Disable ..." patches); dynamic light shadows off also tidies
+    the lighting. SSAO: on (cheap, adds contact shadows).
+
+  Advanced
+    Experimental features     Off            FSR 4.1.1 and AMD motion vectors are not for the Deck.
+    Two-stage GPU pipeline    Auto (8+ threads)  On with the Deck's 8 threads: 20-30% faster;
+                                             switch it off only if the game is unstable.
+    GPU readbacks             Relaxed (default)
+    Fast shader math          Off            A spare: a little more FPS, a slightly different
+                                             picture, shaders compiled again once.
+
+  Not needed from the shadPS4 builds: the "Resolution Patch 1280x800" (Output sets the size), "30
+  FPS++" (the Frame rate setting manages the frame-rate patches), "Better AA" (the Upscaler), and
+  shadPS4's own config (readbacks_mode, buffer cache budget, logging): another emulator core.
+
+  Play from Game Mode (BLauncher: Add to Steam, with Steam closed): in Desktop Mode, Steam's
+  desktop controller layout also turns the Deck's buttons into keys the game reads (phantom key
+  presses), and the desktop's compositor costs frame rate. Controller layout: Gamepad. The first
+  visit to each area compiles shaders (stutter): judge the frame rate on a second pass.
 
 STEAM DECK MEMORY (UMA frame buffer)
   If you set the BIOS UMA Frame Buffer Size to 4 GB: when the battery runs completely flat the
