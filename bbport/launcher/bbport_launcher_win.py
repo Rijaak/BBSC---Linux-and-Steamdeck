@@ -470,10 +470,52 @@ def output_choices(modes, desktop, current=''):
 _display_modes = None
 
 
+def linux_display_modes():
+    """LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): (modes, desktop) on Linux, where Win32 has none
+    to give: xrandr's modes of the primary output (X11, or Xwayland under a Wayland desktop such as
+    the Steam Deck's), its current one as the desktop; Tk's screen size when xrandr is not there. On
+    a Steam Deck that is 1280x800 (16:10), which the dropdown then offers as the other monitors' own
+    sizes are (the shadPS4 builds reached it with the 'Resolution Patch 1280x800' game patch)."""
+    modes, desktop = [], None
+    try:
+        out = subprocess.run(['xrandr', '--query'], capture_output=True, text=True, timeout=5).stdout
+        block, collecting = [], False
+        for line in out.splitlines():
+            if not line.startswith(' ') and ' connected' in line:
+                block = [line]
+                primary = ' primary ' in line
+                current = re.search(r'(\d+)x(\d+)\+\d+\+\d+', line)
+                if current and (primary or desktop is None):
+                    desktop = (int(current.group(1)), int(current.group(2)))
+                    modes = []
+                    collecting = True
+                else:
+                    collecting = False
+            elif line.startswith(' ') and block and collecting:
+                size = re.match(r'\s+(\d+)x(\d+)', line)
+                if size and (int(size.group(1)), int(size.group(2))) not in modes:
+                    modes.append((int(size.group(1)), int(size.group(2))))
+            elif not line.startswith(' '):
+                collecting = False
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    if desktop is None:
+        try:
+            import tkinter
+            root = tkinter._default_root
+            if root is not None:
+                desktop = (int(root.winfo_screenwidth()), int(root.winfo_screenheight()))
+        except Exception:
+            pass
+    return (modes, desktop)
+
+
 def display_modes():
     """(modes, desktop) of the primary monitor from Win32 (EnumDisplaySettingsW): every resolution it
     has and its current one; ([], None) when Windows cannot say. Read once per run."""
     global _display_modes
+    if _display_modes is None and not IS_WINDOWS:
+        _display_modes = linux_display_modes()
     if _display_modes is None:
         _display_modes = ([], None)
         try:
