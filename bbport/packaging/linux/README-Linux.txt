@@ -28,6 +28,14 @@ STEAM DECK GAME MODE
   All Files, run-game.sh. Do NOT force a Steam Play compatibility tool on it: it is a native Linux
   program.
 
+STEAM DECK SETTINGS
+  Settings > General: Output 1280 x 800 (16:10), the Deck's screen; Frame rate 30 FPS; Upscaler
+  FSR 3.1 or TAA (FSR 4 is slow on the Deck's GPU); Borderless. The "Light Grid" patch that matches
+  the output (1280x800, 1080p, 1440p, 4K) goes in by itself: no need to tick it; bbport.ini
+  light_grid=0 leaves it out. Game & effects: Motion blur, Depth of field, Chromatic aberration and
+  Dynamic light shadows off; SSAO on. Play from Game Mode (BLauncher: Add to Steam): in Desktop
+  Mode, Steam's desktop controller layout also sends keys to the game.
+
 STEAM DECK MEMORY (UMA frame buffer)
   If you set the BIOS UMA Frame Buffer Size to 4 GB: when the battery runs completely flat the
   Deck can boot with it back at 1 GB, and long sessions can then hang while loading an area. Check
