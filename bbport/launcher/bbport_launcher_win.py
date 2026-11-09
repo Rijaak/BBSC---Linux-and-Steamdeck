@@ -3617,6 +3617,11 @@ class Launcher:
                 old.place_forget()
             new.place(x=0, y=0, relwidth=1, relheight=1)
             self.motion.tween('slide', 260 if animate else 0, self.px(40), 0, lambda x: new.place_configure(x=int(x)))
+        if name == 'general':
+            # LINUX_FORK: the map card is built before the co-op settings (where a co-op install keeps
+            # the game folder) are read, so it said "Choose your game folder first." until the folder
+            # changed; it looks again each time General opens.
+            self.refresh_map()
         if name == 'mods':
             self.refresh_lists()
         elif name == 'controls' and self.gamepads is None:
