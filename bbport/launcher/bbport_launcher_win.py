@@ -341,13 +341,33 @@ INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': 
 MAP_3D = [('0', ('Off', 'Выкл.')), ('1', ('Prerendered', 'Заранее нарисованная')), ('2', ('Live', 'В реальном времени'))]
 
 
+def path_ignoring_case(root, *parts):
+    """LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): root/parts as the game's files spell them, whatever
+    the case (map/MapStudio or map/mapstudio): a dump keeps the PS4's names, Windows ignores case and
+    Linux does not. None when a part is not there."""
+    at = Path(root)
+    for part in parts:
+        if (at / part).exists():
+            at = at / part
+            continue
+        try:
+            at = next(entry for entry in at.iterdir() if entry.name.lower() == part.lower())
+        except (OSError, StopIteration):
+            return None
+    return at
+
+
 def map_areas(dvdroot):
-    """The game's map areas (map/MapStudio/mAA_BB_00_00.msb.dcx), as the prepare step draws them."""
-    studio = Path(dvdroot) / 'map' / 'MapStudio'
+    """The game's map areas (map/MapStudio/mAA_BB_00_00.msb.dcx, any case), as the prepare step draws them."""
+    studio = path_ignoring_case(dvdroot, 'map', 'MapStudio')
+    if studio is None:
+        return []
     try:
-        return sorted(p.name[:6] for p in studio.glob('m??_??_00_00.msb.dcx'))
+        names = [p.name.lower() for p in studio.iterdir()]
     except OSError:
         return []
+    import fnmatch
+    return sorted(n[:6] for n in names if fnmatch.fnmatchcase(n, 'm??_??_00_00.msb.dcx'))
 
 
 def map_prepared(dvdroot, user):
