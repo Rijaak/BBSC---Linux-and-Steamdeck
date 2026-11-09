@@ -22,11 +22,10 @@ SET UP (once, in Desktop Mode on a Deck)
      compile.
 
 STEAM DECK GAME MODE
-  In BLauncher press Add to Steam (close Steam first: in Desktop Mode, Steam > Exit). It adds
-  run-game.sh as a Non-Steam Game called Bloodborne, which starts the game with the settings you
-  made in BLauncher. Or add it by hand: Steam > Games > Add a Non-Steam Game > Browse, file type
-  All Files, run-game.sh. Do NOT force a Steam Play compatibility tool on it: it is a native Linux
-  program.
+  Add run-game.sh as a Non-Steam Game: in Desktop Mode, Steam > Games > Add a Non-Steam Game >
+  Browse, file type All Files, run-game.sh. It starts the game with the settings you made in
+  BLauncher. Do NOT force a Steam Play compatibility tool on it: it is a native Linux program.
+  (BLauncher's Add to Steam button is off in this build: see KNOWN_ISSUES.md.)
 
 STEAM DECK SETTINGS
   A starting point for the Steam Deck (LCD), from the shadPS4 builds' tested set (a steady 30 FPS at
@@ -84,7 +83,7 @@ STEAM DECK SETTINGS
   FPS++" (the Frame rate setting manages the frame-rate patches), "Better AA" (the Upscaler), and
   shadPS4's own config (readbacks_mode, buffer cache budget, logging): another emulator core.
 
-  Play from Game Mode (BLauncher: Add to Steam, with Steam closed): in Desktop Mode, Steam's
+  Play from Game Mode (run-game.sh added to Steam, above): in Desktop Mode, Steam's
   desktop controller layout also turns the Deck's buttons into keys the game reads (phantom key
   presses), and the desktop's compositor costs frame rate. Controller layout: Gamepad. The first
   visit to each area compiles shaders (stutter): judge the frame rate on a second pass.

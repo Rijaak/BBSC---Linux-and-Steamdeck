@@ -3901,7 +3901,15 @@ class Launcher:
         holder.grid(row=self.next_row(files), column=0, columnspan=2, sticky='w', pady=(px(12), 0))
         self.button(holder, _('Open the saves folder', 'Открыть папку сохранений'),
                     lambda: self.open_path(self.var('user_dir', 'app').get(), 'user_dir')).pack(side='left')
-        self.button(holder, _('Add to Steam', 'Добавить в Steam'), self.add_to_steam).pack(side='left', padx=(px(8), 0))
+        steam_button = self.button(holder, _('Add to Steam', 'Добавить в Steam'), self.add_to_steam)
+        steam_button.pack(side='left', padx=(px(8), 0))
+        if not IS_WINDOWS:
+            # LINUX_FORK, known issue (packaging/linux/KNOWN_ISSUES.md): switched off on Linux until
+            # Add to Steam is checked against NonSteamLaunchers' scanner on a Steam Deck.
+            steam_button.configure(state='disabled')
+        if not IS_WINDOWS:
+            self.note(files, _('Add to Steam is off in the Linux build for now (README-Linux.txt: add '
+                               'run-game.sh by hand in Steam, Games > Add a Non-Steam Game).'), top=10)
         self.note(files, _("In the game, Insert or L3 + R3 opens the port's menu.",
                            'В игре Insert или L3 + R3 открывает меню порта.'), top=14)
         if COOP_INSTALL:
