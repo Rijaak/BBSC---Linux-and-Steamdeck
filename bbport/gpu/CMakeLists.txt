@@ -372,6 +372,13 @@ else()
     # its symbols stay inside libbbgpu.so (its x86 assembly needs that, and nothing else sees them).
     target_link_options(bbgpu PRIVATE
         -Wl,--exclude-libs,libavformat.a:libavcodec.a:libavutil.a:libswscale.a:libswresample.a)
+    # LINUX_FORK: loaded low, as on Windows (bb-probe.exe at 0x140000000 holds this code): PS4 code
+    # keeps pointers in 40-bit fields, and the co-op code hands the game pointers to its own static
+    # data (the party list's tags and texts, bloodborne_party_death.cpp). A shared library at
+    # 0x7f... is past 40 bits: the party HUD showed its placeholders ("99", "test") on a Steam Deck.
+    # 0x200000000 (8 GiB) is under the loader's host-low region (0x800000000) and the PS4's user
+    # memory (0x1000000000); bb-probe is not PIE, so ld.so takes the address as its hint.
+    target_link_options(bbgpu PRIVATE -Wl,-Ttext-segment=0x200000000)
     target_link_libraries(bbgpu PUBLIC PkgConfig::X11)
 endif()
 
