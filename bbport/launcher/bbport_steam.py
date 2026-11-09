@@ -82,12 +82,29 @@ def entry(name, exe, start_dir, icon, options=''):
     ]
 
 
+def _names(shortcuts):
+    """[(appid, AppName)] of a shortcuts map's entries, to check that a write keeps every one."""
+    out = []
+    for kind, _key, value in shortcuts:
+        if kind == MAP:
+            fields = {k.lower(): v for _t, k, v in value}
+            out.append((fields.get('appid'), str(fields.get('appname', ''))))
+    return out
+
+
 def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
-    """Adds the shortcut to one shortcuts.vdf, or updates the entry with the same exe and name (the two
-    Steam makes its id of; in a source tree the exe is python(w).exe, which other shortcuts may use too,
-    so the exe alone is not enough). Returns 'added' or 'updated'. The file as it was before the first change is kept as
-    shortcuts.vdf.bak (a later change does not replace it). Raises OSError or ValueError, and then
-    leaves the file as it was."""
+    """Adds the shortcut to one shortcuts.vdf, or updates the entry with the same name (any case) or the
+    same exe and name. Returns 'added' or 'updated'. Raises OSError or ValueError, and then leaves the
+    file as it was.
+
+    LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck), after a Steam Deck's 40 shortcuts were found down
+    to 2 (2026-11-09):
+    - An entry of that name is updated in place: its Exe and StartDir point at this install, and
+      everything else stays (its appid, so its artwork, play time, launch options, controller layout).
+    - Nothing is ever removed: the list about to be written is read back and must hold every entry
+      it held before (one more when adding), or nothing is written.
+    - Each write first keeps the file as it was, as shortcuts.vdf.<date-time>.yt.bak (and the first
+      one also as shortcuts.vdf.bak, as before)."""
     vdf_path = Path(vdf_path)
     data = vdf_path.read_bytes() if vdf_path.exists() else b''
     root = parse(data)[0] if data else []
@@ -95,28 +112,48 @@ def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
     if shortcuts is None:
         shortcuts = []
         root.append((MAP, 'shortcuts', shortcuts))
+    before = _names(shortcuts)
     new = entry(name, exe, start_dir, icon, options)
     target = f'"{exe}"'.lower()
     for index, (kind, key, value) in enumerate(shortcuts):
         fields = {k.lower(): v for _t, k, v in value} if kind == MAP else {}
-        if str(fields.get('exe', '')).lower() == target and fields.get('appname') == name:
-            # Keep what Steam or the player added (play time, tags).
-            kept = {'lastplaytime', 'tags'}
-            old = {k.lower(): (t, k, v) for t, k, v in value}
-            shortcuts[index] = (MAP, key, [old[k.lower()] if k.lower() in kept and k.lower() in old else (t, k, v)
-                                            for t, k, v in new])
+        same_name = str(fields.get('appname', '')).strip().lower() == name.strip().lower()
+        if same_name or (str(fields.get('exe', '')).lower() == target and fields.get('appname') == name):
+            updates = {'exe': f'"{exe}"', 'startdir': f'"{start_dir}"'}
+            kept = [(t, k, updates[k.lower()]) if k.lower() in updates else (t, k, v) for t, k, v in value]
+            present = {k.lower() for _t, k, _v in kept}
+            kept += [(t, k, v) for t, k, v in new if k.lower() not in present]  # fields it lacked
+            if not str(fields.get('icon', '')).strip():
+                kept = [(t, k, icon) if k.lower() == 'icon' else (t, k, v) for t, k, v in kept]
+            shortcuts[index] = (MAP, key, kept)
             result = 'updated'
             break
     else:
         used = {key for _kind, key, _value in shortcuts}  # the keys need not be a run 0..n-1
         shortcuts.append((MAP, str(next(n for n in range(len(used) + 1) if str(n) not in used)), new))
         result = 'added'
-    backup = vdf_path.with_name(vdf_path.name + '.bak')
-    if data and not backup.exists():
-        backup.write_bytes(data)
+    out = dump(root) + bytes([END])
+    check = next((value for kind, key, value in parse(out)[0] if kind == MAP and key.lower() == 'shortcuts'), [])
+    after = _names(check)
+    missing = [n for n in before if n not in after]
+    if missing or len(after) != len(before) + (result == 'added'):
+        raise ValueError('the new shortcut list would lose {} of the {} shortcuts; nothing was written'.format(
+            len(missing) or abs(len(after) - len(before) - (result == 'added')), len(before)))
+    if data:
+        import time
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        stamped = vdf_path.with_name(f'{vdf_path.name}.{stamp}.yt.bak')
+        count = 2
+        while stamped.exists():  # two changes in one second keep both
+            stamped = vdf_path.with_name(f'{vdf_path.name}.{stamp}-{count}.yt.bak')
+            count += 1
+        stamped.write_bytes(data)
+        backup = vdf_path.with_name(vdf_path.name + '.bak')
+        if not backup.exists():
+            backup.write_bytes(data)
     vdf_path.parent.mkdir(parents=True, exist_ok=True)
     partial = vdf_path.with_name(vdf_path.name + '.tmp')
-    partial.write_bytes(dump(root) + bytes([END]))
+    partial.write_bytes(out)
     os.replace(partial, vdf_path)
     return result
 
@@ -148,17 +185,36 @@ def user_configs(steam):
 def steam_running():
     """Whether steam.exe is in the process list (read from a snapshot, no helper program started):
     True or False, or None when the list could not be read (then nothing is known)."""
-    if sys.platform != 'win32':  # LINUX_FORK: Steam's processes are named steam (and steamwebhelper)
+    if sys.platform != 'win32':
+        # LINUX_FORK: any of Steam's processes (steam, steamwebhelper, the Steam Deck's steam-runtime
+        # launcher), by name or by its program's path, or a live pid in Steam's steam.pid. A Steam that
+        # was not seen rewrote shortcuts.vdf from its own list (2026-11-09).
         try:
             pids = [entry for entry in os.listdir('/proc') if entry.isdigit()]
         except OSError:
             return None
+        own = str(os.getpid())
         for pid in pids:
+            if pid == own:
+                continue
             try:
-                if Path(f'/proc/{pid}/comm').read_text().strip() == 'steam':
-                    return True
+                if Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[-1].split()[0] in ('Z', 'X'):
+                    continue  # ended, not yet collected by its parent
+                comm = Path(f'/proc/{pid}/comm').read_text().strip()
+                cmd = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')[0].decode('utf-8', 'replace')
             except OSError:
-                pass
+                continue
+            program = cmd.rsplit('/', 1)[-1]
+            if comm in ('steam', 'steamwebhelper') or program in ('steam', 'steamwebhelper', 'steam.sh') \
+                    or '/Steam/ubuntu12_32/steam' in cmd or '/Steam/ubuntu12_64/steamwebhelper' in cmd:
+                return True
+        for pidfile in (Path.home() / '.steam/steam.pid', Path.home() / '.local/share/Steam/steam.pid'):
+            try:
+                pid = pidfile.read_text().strip()
+            except OSError:
+                continue
+            if pid.isdigit() and Path(f'/proc/{pid}').exists():
+                return True
         return False
     from ctypes import wintypes
 
