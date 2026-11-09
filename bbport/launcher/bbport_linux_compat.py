@@ -55,9 +55,32 @@ def open_path(path, operation=None):
         raise OSError(f'Could not open {path}: {error}') from error
 
 
+CA_FILES = ('/etc/ssl/certs/ca-certificates.crt',  # SteamOS, Arch, Debian, Ubuntu
+            '/etc/pki/tls/certs/ca-bundle.crt',     # Fedora, Bazzite
+            '/etc/ssl/ca-bundle.pem',               # openSUSE
+            '/etc/ssl/cert.pem')
+
+
+def use_system_certificates():
+    """The frozen launcher's OpenSSL (built on Ubuntu) looks for the trusted certificates in /usr/lib/ssl,
+    which SteamOS and most other systems do not have: no certificate is trusted and Global's sign-in
+    (HTTPS) fails. Point it at the system's bundle, unless the player set one."""
+    import ssl
+    paths = ssl.get_default_verify_paths()
+    if os.environ.get('SSL_CERT_FILE') or (paths.cafile and os.path.exists(paths.cafile)):
+        return
+    for path in CA_FILES:
+        if os.path.exists(path):
+            os.environ['SSL_CERT_FILE'] = path
+            break
+    if not os.environ.get('SSL_CERT_DIR') and os.path.isdir('/etc/ssl/certs'):
+        os.environ['SSL_CERT_DIR'] = '/etc/ssl/certs'
+
+
 def install():
     if IS_WINDOWS:
         return
+    use_system_certificates()
     if not hasattr(ctypes, 'windll'):
         ctypes.windll = _WinDll()
     if not hasattr(ctypes, 'WinError'):
