@@ -23,6 +23,10 @@ void bbcoop_install(unsigned char *image, uint64_t eboot_size, void *code, uint6
  * (user/log/crash-*.txt and .dmp). */
 void bbcoop_crash_report(void *exception_pointers);
 
+/* LINUX_FORK: 1 when a save is loaded (the game's player character exists), 0 on the title screen,
+ * its menus and loading screens. */
+int bbcoop_player_in_world(void);
+
 /* The window is closing: a game whose thread has stopped ticking writes a freeze report
  * (user/log/freeze-*.txt and .dmp) first. */
 void bbcoop_window_closing(void);
