@@ -244,6 +244,25 @@ def validate_patch_requirements(names, game):
     return names
 
 
+# LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): the community "Light Grid" patches (Kyo) cut the
+# light grid's draw calls, each for one window/full-screen size ("use the version that matches your
+# window/fullscreen resolution, not the render resolution"): the one matching the chosen output
+# goes in by itself (a Steam Deck's 1280x800, as the shadPS4 Deck setup had it); other sizes keep
+# the game's own grid. bbport.ini light_grid=0 leaves it out. Not in a fingerprinted group (their
+# sites would change the groups' fingerprints): applied with the clean eboot only, as extra names are.
+LIGHT_GRIDS={(1280,800):'1280x800 Light Grid For SteamDeck (READ NOTES)',
+             (1920,1080):'1080p Light Grid (READ NOTES)',
+             (2560,1440):'1440p Light Grid (READ NOTES)',
+             (3840,2160):'4k Light Grid (READ NOTES)'}
+
+
+def light_grid_patch(settings):
+    """The Light Grid patch for bbport.ini's output_res, None for other sizes or light_grid=0."""
+    if str(settings.get('light_grid','1')).strip()=='0':
+        return None
+    return LIGHT_GRIDS.get(chosen_output(settings))
+
+
 def effect_patches(settings, production=None):
     if production is None:
         production=is_production()
@@ -825,6 +844,10 @@ def main():
     if whole and language_region() and LANGUAGE_REGION not in names:
         names.append(LANGUAGE_REGION)
     names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names and GROUP_OF.get(n) in groups]
+    grid=light_grid_patch(read_settings(a.settings))
+    if grid and whole and grid not in names:
+        names.append(grid)
+        print(f'Patches: {grid.split(" (")[0]} (matches the output)')
     if 'fixes' in groups:
         if intel_tonemap_fix() and INTEL_TONEMAP not in names:
             names.append(INTEL_TONEMAP)
