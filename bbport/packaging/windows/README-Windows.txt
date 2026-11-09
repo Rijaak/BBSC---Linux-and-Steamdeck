@@ -1,0 +1,226 @@
+Bloodborne (bbport) for Windows
+===============================
+
+No game files are included. You need your own decrypted dump of Bloodborne CUSA03173
+(the folder with eboot.bin, sce_module, sce_sys, dvdroot_ps4), or the PlayStation 4 .pkg files
+of the game (see "Installing from .pkg files"). Game version 1.09 is needed for the community
+patches (60/90/unlocked FPS, resolution, effects); other versions run at 30 FPS.
+
+Requirements
+- Windows 10 (1903 or later) or Windows 11, 64-bit.
+- A Vulkan 1.3 graphics card with a current driver.
+- About 6 GB of free memory commit (RAM + page file), 10 GB for 1440p/4K output.
+  Nothing else: Python and the libraries are inside this folder.
+
+Starting
+- BLauncher.exe opens the launcher. On "Game & effects" pick your game folder, adjust the
+  settings, press PLAY. The "Play" page checks the game version, saves, graphics card and
+  FSR 4 assets.
+- Bloodborne.exe starts the game straight away with the settings saved in the launcher,
+  without opening it. Set things up once in BLauncher.exe, then use Bloodborne.exe (or a
+  shortcut to it, or "Add to Steam" on the Play page). If no game folder is chosen
+  yet it opens the launcher. BLauncher.exe --play does the same. The log goes to
+  user\last_run.log. Advanced -> "Close the launcher when the game starts" closes the launcher
+  once the game window is up (not while mods are prepared, which can take 30 to 40 seconds with
+  large mods); the game writes user\last_run.log itself, so it keeps filling after that.
+- Add to Steam (Play page) writes a non-Steam game shortcut to Bloodborne.exe into the
+  shortcuts.vdf of every Steam account on this PC (Steam's userdata\<id>\config folder) and keeps
+  the old file as shortcuts.vdf.bak. Steam rewrites that file as it exits, so close Steam fully
+  first (the launcher refuses while it runs), press the button, then start Steam. Pressing it
+  again updates the entry for the same Bloodborne.exe instead of adding a second one.
+- Installing from .pkg files: "Install from PKG..." (on the Play page, and on "Game & effects")
+  opens one window. "Choose PKG files..." takes the game .pkg (about 31 GB), the v1.09 update
+  .pkg and the DLC .pkg of Bloodborne; "Scan a folder..." looks for .pkg files in a folder and
+  its subfolders (3 levels deep). Each file is listed with what it is (game, update version,
+  DLC), and the best game, the highest update and the DLC are ticked for you; files that are
+  not Bloodborne are listed with the reason and cannot be ticked. Both dialogs open in the
+  folder you used last (else Downloads). "Install into" defaults to a "game" folder next to
+  BLauncher.exe; about 1.1 times the size of the files must be free, and Install stays off
+  until the space is there. The launcher extracts the game, applies the update over it, sets
+  the game folder and runs the ready check. The game takes 15 to 30 minutes; the launcher
+  stays usable and "Stop" cancels. A package PkgTool cannot read (encrypted, unsupported) is
+  reported with PkgTool's own message. The DLC .pkg holds only the license:
+  its label (SPEXPANSIONDLC03, The Old Hunters) is saved and reported to the game as BB_ADDCONT
+  (Game & effects -> "DLC", with a Clear button). Only Bloodborne packages are accepted
+  (CUSA03173, CUSA00900, CUSA00207, CUSA01363, CUSA03023); an update other than 01.09 is
+  accepted with a warning. PkgTool needs the .NET Framework 4, which Windows 10 and 11 include.
+- Advanced -> "Desktop shortcut" puts Bloodborne on the desktop.
+- Updates: when a new version is out, a card at the top right of the launcher says so; "Update"
+  downloads and installs it and opens the launcher again (saves, settings and mods are kept).
+  Advanced -> "Check for updates" checks by hand. Only stable versions are offered unless
+  Advanced -> "Beta versions" is on (it is on by default while you run a beta, and a beta user
+  is still offered the final release when it comes out).
+- Advanced -> "Launcher language": English, Russian, Arabic, Spanish, Portuguese, French,
+  German, Italian, Polish, Turkish, Chinese, Japanese, Korean (default: the Windows language).
+- Advanced -> Display & FPS -> "Monitor" (shown with more than one monitor) picks the monitor
+  the game opens on; "Primary monitor" is the default. The launcher saves the monitor's name and
+  starts the game with BB_DISPLAY set to it. If that monitor is not connected the launcher says
+  so and the game uses the primary one. BB_DISPLAY also takes a monitor number (1, 2, ...).
+- Advanced -> "Experimental features" (off by default) unlocks options that are still being
+  tested; the launcher marks them (experimental). For now that is object motion vectors on AMD
+  graphics cards, which the game keeps off there because they cost frame rate and drew some
+  objects wrong with frame generation. With the switch on and "Object motion vectors" on
+  (Graphics), the launcher starts the game with BB_OBJECT_MOTION_AMD=1.
+- In the game, Insert (or L3+R3 on a gamepad) opens the port's menu (upscaler, resolution,
+  effects). Keyboard (Dark Souls III layout; the Controls tab of the launcher changes it): WASD move,
+  mouse or IJKL camera, Space Circle, E/Enter Cross, R Square, F Triangle, left/right button R1/L1,
+  Shift + button R2/L2, Left Ctrl L2, C L3, Q R3, arrows or wheel d-pad, Esc Options (menu),
+  Tab or G left touchpad (gestures), Backspace right touchpad.
+- The buttons the game shows follow your controller: Xbox icons for an Xbox pad, PlayStation icons for a
+  PlayStation pad, your keys and mouse buttons with none (Controls > Button icons picks one by hand). They
+  are redrawn at start from your own copy of the game and kept in out\icons; nothing in the game folder changes.
+
+Data
+- Saves and shader caches: user\ next to BLauncher.exe (the launcher can pick another folder).
+- Settings: bbport.ini next to BLauncher.exe; launcher options in %APPDATA%\bbport-launcher.
+- Generated files (prepared game image, patches): out\.
+
+Online play (beta)
+- Register a shadNet account at https://shadnet.shadps4.net. In the launcher open
+  "Online co-op", tick "Play online", enter the account name (not the email) and password,
+  press "Test connection", then PLAY and choose online at the title screen.
+- Messages, bloodstains and ghosts come from The Hunter's Dream (https://thehuntersdream.com);
+  bells and summons go through the shadNet server. Everyone needs game version 1.09 and the
+  same co-op server. Summoning between players is not confirmed yet.
+
+Cheats
+- The "Cheats" page has cheats (never die, enemies do not see or hear you, Rally never fades,
+  control the targeted enemy) and gameplay tweaks (no Rally, camera further away, no camera
+  auto-rotation, run with less stick tilt, ragdoll physics). They are game patches for 1.09,
+  applied when the game starts.
+
+Problems
+- Black screen at start: Advanced -> "Clear shader cache", then start again (the first minutes
+  stutter while the cache is rebuilt).
+- Send user\last_run.log with any bug report.
+
+Upscaling
+- DLSS: NVIDIA GeForce RTX 20 series or newer with a current driver (Graphics -> Upscaler ->
+  DLSS, or the in-game menu). On other GPUs the option is greyed out.
+- XeSS (Intel XeSS Super Resolution 2.0.2, from the XeSS SDK 3.0.2, bin\libxess.dll): for AMD, Intel
+  and NVIDIA GPUs with DP4a support, a good choice where FSR 4 is slow or missing (for example
+  Radeon RX 6000). It has no sharpener of its own: the Sharpness setting adds one.
+- FSR 3.1 works on every GPU. FSR 4 needs its assets in fsr4_shaders\ (included in this
+  package, or Graphics -> "Download FSR 4 assets"); GPUs without the required shader features
+  fall back to FSR 3.1 by themselves.
+- The launcher checks what your PC can run: upscalers it cannot are marked "not available" with the
+  reason and cannot be picked. If the saved one cannot run, the launcher switches to DLSS (RTX
+  GPUs) or FSR 3.1 and says so once. FSR 4 is allowed on Radeon RX 5000/6000 GPUs but marked "may
+  be slow".
+
+FSR 4.1.1 (experimental)
+- The built-in FSR 4.1.1 needs a Vulkan extension (VK_VALVE_shader_mixed_float_dot_product) that
+  no Windows driver offers yet. On Windows the game can instead use fsr4vk
+  (https://github.com/dvj5411/fsr4vk), a separate program that runs the same AMD model. It is
+  experimental: here it was checked on a GeForce RTX 4070 and a Radeon RX 6600.
+- It is off until you opt in, and it is not in this zip. To use it:
+  1. Advanced -> Performance -> turn on "Experimental features".
+  2. Graphics -> "FSR 4.1.1 (experimental)" -> "Download FSR 4.1.1" (about 14 MB, once).
+  3. Graphics -> Upscaler -> "FSR 4.1.1 (experimental)".
+  If you downloaded it with an earlier version, the same place offers "Update FSR 4.1.1": the new
+  build makes it work on AMD cards.
+- The download is fsr4vk v0.4.3 with one fix for AMD's Windows driver, built by this port and
+  hosted on its GitHub release next to its source (fsr4vk-v0.4.3-amdfix-src.zip). It is checked
+  against a fixed SHA-256 and goes to the fsr4vk folder next to BLauncher.exe. Launcher updates
+  leave that folder alone. fsr4vk is GPL-3.0; its licenses and SOURCE.txt are in the fsr4vk folder
+  after the download. The game loads it as a separate program and does not include its code.
+- Until the files are downloaded and Experimental features is on, the entry is greyed out and says
+  why. If it was your saved upscaler and either goes away, the launcher switches to DLSS (RTX GPUs)
+  or FSR 3.1 and says so once.
+- Cost on a GeForce RTX 4070, 1080p output from 720p: about 2.4 ms per frame, against about 2.0 ms
+  for FSR 4 and 0.55 ms for FSR 3.1. Measured once, not a benchmark.
+
+Frame generation (optional)
+- Graphics -> "Frame generation" (also on the Play page and in the in-game menu, or
+  frame_generation=1 in bbport.ini, or BB_FRAME_GEN=1 for one run) shows generated frames
+  between the game's own: 60 FPS of the game are shown as 120 (2x) or, with DLSS on a GeForce
+  RTX 50, up to 240 (4x). Driven by the game's depth and motion vectors, it works with every
+  upscaler (FSR 4, FSR 4.1.1, FSR 3.1, DLSS, XeSS or TAA). The HUD is kept out of the generated
+  frames, so it does not smear. Default: off.
+- Provider (frame_gen_provider=fsr3|dlss, BB_FRAME_GEN_PROVIDER): FSR 3.1 is AMD's FidelityFX
+  frame interpolation and optical flow, on any GPU, one frame (2x). DLSS is NVIDIA's Frame
+  Generation: GeForce RTX 40 2x, RTX 50 up to 4x (multiplier frame_gen_multiplier=2..4,
+  BB_FRAME_GEN_MULTIPLIER). It needs bbport_dlss.dll built with Frame Generation and NVIDIA's
+  nvngx_dlssg.dll in bin\ (packaging/windows/build_dlss.sh puts both there); without them, on
+  other GPUs or when it fails, FSR 3.1 runs instead and the menu says why.
+- Each generated frame needs its own image (8 MB at 1080p, 33 MB at 4K, four game frames' worth
+  are kept). They are made only while generation is on and freed when it is switched off; when
+  the video memory is full generation goes off instead of the game stopping ("Not enough video
+  memory for the generated frames"). On 6 GB cards prefer 2x.
+- It costs input lag: the game frame is shown about half a frame interval later than without
+  it. Best with at least 60 FPS before generation; below that the interpolated frames show
+  more artifacts and the lag is more noticeable.
+- It is off, with a line in the log, when the upscaler is Off, with HDR output, and when the
+  scene is rendered larger than the window.
+- "Fit to display refresh" (frame_gen_fit_display, on by default): no more frames than the
+  display shows between two of the game's, decided once a second. While the game runs faster
+  than half of the refresh rate there is no room for a second image per frame: generation pauses
+  ("Frame generation: paused, no room on the display" in the log) and returns when the rate
+  falls; on a 144 Hz display 2x works up to about 65 FPS of the game, and DLSS 4x at 60 FPS runs
+  as 2x (the menu shows "Now 2x on a 144 Hz display"). Off: the multiplier as chosen; past the
+  refresh rate the display shows the newest images. With vertical sync it is always fitted.
+  When presenting takes the whole frame interval (a GPU or display too slow) generation pauses
+  for 5 seconds, longer each time ("presenting does not keep up").
+- Menus, loading screens and movies are shown as they are; generation restarts with the scene.
+- With vertical sync (present mode Fifo, which AMD GPUs use on Windows; BB_PRESENT_MODE) the
+  display paces the images. With Mailbox or Immediate the port spreads them evenly over the
+  game's frame interval: the generated frames first, then the game frame.
+- You do not need to pick a frame cap. With frame generation on, the launcher caps the game at
+  half of your display's refresh rate (at most 120 FPS, at least 30; 60 when the refresh rate
+  cannot be read): 72 FPS shown as 144 on a 144 Hz display, 90 as 180 on 180 Hz, 120 as 240 on
+  240 Hz or faster. A cap at or below half of the refresh rate keeps generation on all the time:
+  it leaves a refresh slot for every interpolated image ("Frame generation: frame cap N FPS
+  fits half the refresh rate (R Hz): always on" in the log). The Simple page shows the result
+  under the switch, for example "Up to 72 game FPS, 144 on your 144 Hz screen." On a display
+  under 100 Hz it says generation helps little and is better left off.
+- With frame generation off, "Auto" sets no cap: the game runs as fast as it can.
+- The Advanced view (Display & FPS) lets you pick a cap yourself: 60, 90 or 120 FPS, 144, 165 or
+  240 FPS (marked with a warning: above 120 FPS the game's movement timing breaks), or No limit.
+  A cap of 60 shows 120 images a second. The line under the list says what the choice gives with
+  your switch; a cap whose double does not fit the display ("Too high to double on your 144 Hz
+  screen") makes generation pause while the game runs above half of the refresh rate, and
+  "Auto" fixes it. A frame cap saved by v1.6.13 as "Half the refresh rate" now reads Auto.
+- The FPS counter reads "120 FPS (game 60, frame gen 2x)" while it works: the game's own rate is
+  what resolution and upscaler change. With BB_FRAME_STATS=1 the log gets
+  "Frame generation: N generated/s, M presented/s, base B FPS, X skipped" every 5 seconds.
+- ReShade and other overlays see every shown image, so twice as many presents as game frames.
+
+ReShade (optional)
+- Graphics -> "ReShade" (or "ReShade look" on the Play page) switches it on for the next game
+  start: two presets, Natural (sharpening, deband, a little contrast and colour) and Vivid (more
+  contrast and colour, a light vignette). ReShade 6.8.0 and the effects are inside this package
+  (bin\reshade\); nothing is installed on the system and nothing changes while it is off.
+  Measured on an RTX 4070 it costs about 0.3 ms per frame at 1080p and 0.5 ms at 1440p, 3 to 4%
+  of the frame at about 75 FPS. It does not read the game's depth, so there are no depth-based
+  effects (the game has its own depth of field and ambient occlusion).
+- In the game press Home to open ReShade's menu (Print Screen saves a screenshot to
+  bin\reshade\screenshots\). Changes are saved in the preset in use.
+- Your own presets: bin\reshade\presets\*.ini (create them in ReShade's menu, or copy .ini files
+  there; "Open presets folder" opens it). They show up in the dropdowns. Updates keep
+  bin\reshade\ReShade.ini and every preset already there, so your edits survive; delete a preset
+  file to get the shipped one back with the next update. ReShade's log is bin\reshade\ReShade.log.
+- It is a Vulkan layer enabled only for the game process (VK_ADD_LAYER_PATH, VK_INSTANCE_LAYERS and
+  RESHADE_BASE_PATH_OVERRIDE are set by the launcher), so a ReShade installed on the system is not
+  involved. Licences: licenses\ReShade-*.txt.
+
+Mods and patches
+- Put each mod in its own folder under mods\ (dvdroot_ps4\..., or chr\, parts\, ... directly);
+  enable and order them on "Mods & patches". The game files are never changed. Without Windows
+  Developer Mode the port links folders with junctions and files with hard links; when the game
+  is on another drive, the temporary mod view is made next to the game folder.
+- Third-party patches: shadPS4/GoldHEN XML files for 1.09 in patches\.
+
+Credits
+- Online play: shadp2p by Wozzardman (https://github.com/Wozzardman/shadp2p), shadNet by the
+  shadPS4 team, The Hunter's Dream by droogie.
+- bbport (the Linux port this is built on): https://github.com/deadinside28/bloodborne_pc
+- Windows port: https://github.com/Supermedo/bloodborne_pc
+- PkgTool, which extracts the .pkg files: maxton/LibOrbisPkg v0.2, LGPL-3.0, unmodified, in
+  bin\pkgtool\ (license: licenses\PkgTool-LICENSE.txt, source: https://github.com/maxton/LibOrbisPkg).
+- ReShade, which the optional post-processing uses: crosire/reshade 6.8.0, BSD-3-Clause, unmodified,
+  in bin\reshade\ (https://reshade.me). Effects by CeeJay.dk (SweetFX, MIT), AMD (FidelityFX CAS, MIT)
+  and haasn/JPulowski (Deband, MIT); licenses: licenses\ReShade-*.txt.
+- AMD FidelityFX SDK (FSR 3.1, FSR 4) and FireBurn's FSR-Vulkan port of it, both MIT, built into the
+  game's GPU library; licenses: licenses\AMD-FidelityFX-SDK-LICENSE.txt and
+  licenses\FireBurn-FSR-Vulkan-LICENSE.txt.
+- The full list of projects and patch authors is in README.md (Credits and licenses).

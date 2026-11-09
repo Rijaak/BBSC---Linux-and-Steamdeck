@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: in-game settings menu (Dear ImGui), drawn by the presenter into the swapchain image
+// after the game frame, at display resolution. Insert (keyboard) or a tap of L3+R3 (gamepad)
+// opens it; holding L3+R3 opens a quit box instead. While either is open the game gets no
+// pad/keyboard input. Settings live in bbport_settings.h.
+
+#pragma once
+
+#include <string>
+#include "common/types.h"
+#include "video_core/renderer_vulkan/vk_common.h"
+
+union SDL_Event;
+struct SDL_Window;
+
+namespace Vulkan {
+class Instance;
+}
+
+namespace BbOverlay {
+
+/// Present thread, once: the ImGui context and its Vulkan backend.
+void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count);
+
+/// Window thread, for every SDL event: true when the menu consumed it.
+bool HandleEvent(const SDL_Event& event);
+/// Turns SDL text input on while the menu edits a value (window thread, once per poll).
+void UpdateTextInput(SDL_Window* window);
+
+/// Whether anything is drawn this frame (menu open, FPS counter on, party death's panel).
+bool Visible();
+
+/// Present thread: draws into `view` (layout ColorAttachmentOptimal). `game` is where the game's
+/// frame sits in it (letterboxed when the shapes differ); the party HUD follows it.
+void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, vk::Rect2D game);
+
+/// The menu or the text dialog is open: the game's input is held neutral.
+bool CapturesInput();
+
+/// The settings menu or the team screen is open: the window shows the system cursor over it.
+bool MenuOpen();
+
+/// Window thread: the game's text dialog (ImeDialog) state, drawn as a box over the frame.
+void SetTextPrompt(bool active, const std::string& prompt, const std::string& text);
+
+/// Window thread, once per poll: a held L3+R3 opens the quit box after 1.5 s.
+void Tick();
+
+/// Window thread, test knob: BB_TEST_OVERLAY_AT=<seconds>[,<seconds>...] toggles the menu that many
+/// seconds after the first call, so a harness run can open and close it without sending input.
+void TestTick();
+
+} // namespace BbOverlay

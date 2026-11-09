@@ -1,0 +1,87 @@
+BLOODBORNE SEAMLESS CO-OP (BLOODBORNE PC, THE NATIVE PORT)
+==========================================================
+
+Seamless co-op for Bloodborne, in the spirit of Elden Ring Seamless Co-op: up to five players
+make a team, share one world, join each other without bells, signs or Insight, keep playing together through lamp
+trips, deaths and boss fights, and progress is shared. The game runs natively on Windows (the
+Bloodborne PC port), not in an emulator.
+
+NO GAME FILES ARE INCLUDED. You need your own copy of Bloodborne for PlayStation 4, version
+1.09: a decrypted dump of the game folder (the one with eboot.bin, sce_sys and dvdroot_ps4)
+with the 1.09 update, or the PS4 .pkg files of the game and the update.
+
+EVERYONE IN A PARTY USES THIS SAME RELEASE. Mixing releases, or mixing with other co-op kits or
+shadPS4, is not supported.
+
+YOU NEED
+  - Windows 10 (1903 or later) or 11, 64-bit, and a Vulkan 1.3 graphics card with a current
+    driver. Nothing else.
+  - Bloodborne 1.09 (see above). Tested with CUSA03173 (the European Game of the Year edition);
+    every player in a party should use the same edition.
+  - The internet. The public server (seamlesshunt.com) needs nothing else: no VPN, no ports.
+    Only for a Local server of your own: a way for everyone to reach the PC that runs it (the
+    host's): the same VPN (Radmin VPN, Tailscale, ZeroTier) or its public IP with ports
+    forwarded: TCP 31313, 31315, 20443 and UDP 31314. UDP 31314 must be open: every game's co-op
+    traffic goes through the server on it.
+
+STEPS (everyone)
+  1. Run the setup .exe. Keep "Create a desktop shortcut" ticked if you want one.
+  2. Open "Bloodborne Seamless Co-op" (the desktop shortcut or the Start menu). It offers the
+     public server once: Switch to the public server, then sign in or create an account (a name
+     and a password), pick your Bloodborne folder and go on to step 3. Nobody starts a server.
+     Keep Local plays on a server of your own instead. For Local, on the Co-op card:
+       Your Bloodborne folder  the launcher looks for it by itself; else press Browse (it searches
+                               inside and around the folder you pick) or Install from PKG
+       You are                 one player is the Host (runs the co-op server on their PC),
+                               the others are Players
+       Host's IP address       the host's VPN or public IP (the host types their own)
+       Account name/password   pick any; your account is made on the host's server the first
+                               time you press PLAY
+       Enemies                 the same for every player
+  3. Press PLAY. The first time, Windows asks once to let co-op through its firewall (say yes),
+     and the launcher prepares the game from your copy (links to it, nothing is copied) and makes
+     the co-op map event files. On Local, the host presses Start server (bottom left) before PLAY.
+  4. Continue, Load Game or New Game opens the team screen: create a team and invite the
+     hunters online, or join a team you were invited to, then Ready. The leader's "Begin the
+     hunt" starts everyone; the leader hosts the team's world. Load in and you are in one world
+     with your team a few seconds later, no bells or signs. "Play alone" plays without a team.
+     The first start takes longer (it builds its shader cache).
+
+Co-op runs at 60 FPS. Picking Unlocked (up to 120 FPS) or 90 FPS as the frame rate is still
+in testing: the launcher warns when you pick one. The game's updates still go out as often as at
+60 (sent more often, they made the others freeze and fly).
+
+SAVES
+  Your saves live in the "user\savedata" folder of the install. "Bring saves from another
+  folder" on the Co-op card copies a character from a shadPS4 'user' folder, an older co-op
+  folder or a folder of CUSA... saves.
+
+PARTY DEATH (AS IN ELDEN RING NIGHTREIGN)
+  - A killing blow puts you down at 1 HP instead of killing you while a partner stands on the
+    same map. Enemies leave you alone while you are down.
+  - A partner revives you by striking you (R1 or R2 right next to you). Each strike counts their
+    weapon's attack rating: they must deal your max HP the first time, twice that the next, four
+    times after that (this starts over after 3 minutes without going down, or at a lamp).
+  - Hold Circle for 3 seconds to give up: you die as before and wake at your lamp.
+  - When everyone on a map is down, everyone there dies, drops their echoes and wakes at their
+    own last lamp with the map reset.
+
+CONTROLS AND SETTINGS
+  - Insert (or L3+R3 on a gamepad) opens the port's menu in the game: resolution, upscaler (FSR,
+    DLSS on RTX cards, XeSS), effects, controls. "Apply and restart" keeps co-op on.
+  - The launcher's Advanced view has every other setting of the port.
+
+UPDATING
+  Run the new release's setup .exe: it installs over the old one. Your saves, settings and shader
+  cache stay.
+
+PROBLEMS
+  - Black screen at start: delete user\shader in the install folder and start again.
+  - Logs for a bug report: user\log\shad_log.txt and console.txt (and the .prev ones from the
+    start before), the host's user\log\shadnet.txt and backend.txt.
+  - Report issues at https://github.com/Amanises-Yharnam-Together/BBSC-Yharnam-Together/issues
+
+Made together by Yharnam Together, AMANISES and Supermedo.
+
+This project is not affiliated with Sony Interactive Entertainment or FromSoftware. CREDITS.txt
+lists the projects it is built on and their licenses (licenses folder).

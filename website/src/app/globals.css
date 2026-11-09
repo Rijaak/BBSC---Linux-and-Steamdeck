@@ -1,0 +1,366 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * The site's look follows Bloodborne's own menus: black panels in a grey mist, off-white serif
+ * text, silver rules with scrollwork, menu titles in old gold and a warm glow behind the chosen
+ * item. One typeface throughout (EB Garamond). Dark only, like the game.
+ */
+:root {
+  color-scheme: dark;
+  --radius: 0rem;
+
+  --background: #0d0f13;
+  --foreground: #e2d6b9;
+  --card: #191c22;
+  --card-foreground: #e2d6b9;
+  --popover: #12151a;
+  --popover-foreground: #e2d6b9;
+  --primary: #6e5a36;
+  --primary-foreground: #f0e2c2;
+  --secondary: #12151a;
+  --secondary-foreground: #e2d6b9;
+  --muted: #0b0d11;
+  --muted-foreground: #aea590;
+  --accent: #191c22;
+  --accent-foreground: #f0e2c2;
+  --destructive: #d9695c;
+  --border: #2b3038;
+  --input: #2b3038;
+  --ring: #d9b878;
+
+  /* The launcher's palette: parchment text, gold for titles and the gilt of rules and frames,
+     a soft gold glow behind a chosen item, and red kept for the blood drop alone. */
+  --bone: #f0e2c2;
+  --title: #d9b878;
+  --silver: #c9a86a;
+  --glow: rgb(217 184 120 / 0.22);
+  --blood: #a3231f;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-bone: var(--bone);
+  --color-title: var(--title);
+  --color-silver: var(--silver);
+  --color-blood: var(--blood);
+
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
+
+  --font-serif: var(--font-garamond), "Garamond", Georgia, serif;
+  --font-sans: var(--font-garamond), "Garamond", Georgia, serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background font-serif text-[1.15rem] leading-relaxed text-foreground antialiased;
+    /* Mist from above, a dark vignette, and a faint grain so the black is not flat. */
+    background-image:
+      radial-gradient(ellipse 90% 55% at 50% -5%, rgb(120 138 168 / 0.09), transparent 65%),
+      radial-gradient(ellipse 140% 100% at 50% 50%, transparent 55%, rgb(0 0 0 / 0.85)),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-attachment: fixed;
+  }
+  ::selection {
+    background: rgb(196 164 107 / 0.35);
+    color: var(--bone);
+  }
+  :focus-visible {
+    outline: 1px solid var(--ring);
+    outline-offset: 3px;
+  }
+}
+
+@layer components {
+  /* A panel like the game's: dark, with silver rules above and below and no side borders. */
+  .panel {
+    position: relative;
+    --c: rgb(201 168 106 / 0.75);
+    background:
+      linear-gradient(var(--c), var(--c)) top left / 14px 1px no-repeat,
+      linear-gradient(var(--c), var(--c)) top left / 1px 14px no-repeat,
+      linear-gradient(var(--c), var(--c)) top right / 14px 1px no-repeat,
+      linear-gradient(var(--c), var(--c)) top right / 1px 14px no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom left / 14px 1px no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom left / 1px 14px no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom right / 14px 1px no-repeat,
+      linear-gradient(var(--c), var(--c)) bottom right / 1px 14px no-repeat,
+      linear-gradient(180deg, rgb(25 28 34 / 0.92), rgb(18 21 26 / 0.94));
+    border: 1px solid #2b3038;
+    box-shadow: inset 0 0 60px rgb(0 0 0 / 0.35);
+  }
+
+  /* The launcher's buttons have their corners cut off. The edge is the element's own
+     background, cut to shape; the fill is a layer 1px inside it, cut the same way, so the gold
+     line follows the cut corners too. Set --cut-edge and --cut-fill to colour it. */
+  .cut-corners {
+    isolation: isolate;
+    border: 0;
+    background: var(--cut-edge);
+    clip-path: polygon(
+      8px 0,
+      calc(100% - 8px) 0,
+      100% 8px,
+      100% calc(100% - 8px),
+      calc(100% - 8px) 100%,
+      8px 100%,
+      0 calc(100% - 8px),
+      0 8px
+    );
+  }
+  .cut-corners::before {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    z-index: -1;
+    background: var(--cut-fill);
+    clip-path: polygon(
+      7.6px 0,
+      calc(100% - 7.6px) 0,
+      100% 7.6px,
+      100% calc(100% - 7.6px),
+      calc(100% - 7.6px) 100%,
+      7.6px 100%,
+      0 calc(100% - 7.6px),
+      0 7.6px
+    );
+    transition: background 200ms;
+  }
+
+  /* A plain text link in the header, the guide's page list and the footer: off-white, gold
+     when current, with a thin gold rule under it. */
+  .nav-link {
+    color: var(--muted-foreground);
+    text-decoration: none;
+    transition: color 160ms;
+  }
+  .nav-link:hover {
+    color: var(--bone);
+  }
+  .nav-link[aria-current="page"] {
+    color: var(--title);
+  }
+
+  /* Long text in the guide: each section has its title in old gold over the painted divider. */
+  .guide {
+    @apply text-foreground;
+  }
+  .guide > section {
+    @apply py-8;
+  }
+  .guide > section > h2 {
+    @apply scroll-mt-24 text-xl leading-snug tracking-[0.14em] text-title uppercase;
+  }
+  .guide > section > h2::after {
+    content: "";
+    display: block;
+    width: 12rem;
+    height: 1rem;
+    margin-top: 0.45rem;
+    background: url("/art/divider.webp") left center / contain no-repeat;
+  }
+  .guide > section > div {
+    @apply mt-5;
+  }
+  .guide > section > div > h3 {
+    @apply mt-8 mb-2 text-xl text-bone;
+  }
+  .guide > section > div > p {
+    @apply my-3 max-w-[68ch];
+  }
+  .guide > section > div > p:first-child {
+    @apply mt-0;
+  }
+  .guide > section > div > ul,
+  .guide > section > div > ol {
+    @apply my-4 max-w-[68ch] space-y-2 pl-6;
+  }
+  .guide > section > div > ul {
+    list-style: none;
+  }
+  .guide > section > div > ul > li {
+    position: relative;
+  }
+  .guide > section > div > ul > li::before {
+    content: "";
+    position: absolute;
+    left: -1.05rem;
+    top: 0.7em;
+    width: 5px;
+    height: 5px;
+    border: 1px solid var(--silver);
+    transform: rotate(45deg);
+  }
+  .guide > section > div > ol {
+    @apply list-decimal marker:text-title;
+  }
+  .guide a {
+    @apply text-title underline decoration-title/40 underline-offset-4 hover:text-bone hover:decoration-bone/60;
+  }
+  .guide strong {
+    @apply font-medium text-bone;
+  }
+  .guide :where(p, li, td, dd) code {
+    @apply bg-muted px-1.5 py-0.5 font-mono text-[0.82em] text-bone;
+    overflow-wrap: anywhere;
+  }
+  .guide pre {
+    @apply my-6 overflow-x-auto bg-card p-4 font-mono text-sm leading-snug text-bone;
+    border-block: 1px solid rgb(201 168 106 / 0.32);
+  }
+  .guide pre code {
+    @apply bg-transparent p-0 text-[inherit];
+  }
+  .guide table {
+    @apply my-6 w-full border-collapse text-base;
+  }
+  .guide th {
+    @apply border-b border-silver/40 px-3 py-2 text-left font-normal text-title;
+  }
+  .guide td {
+    @apply border-b border-border px-3 py-2 align-top;
+  }
+}
+
+/* The backdrop (src/components/backdrop.tsx). */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.backdrop-layer {
+  position: absolute;
+  inset: 0;
+}
+.backdrop-layer > * {
+  position: absolute;
+}
+.backdrop-moon {
+  top: 4vh;
+  right: 6vw;
+  width: min(30vw, 22rem);
+  aspect-ratio: 1;
+  background: url("/art/moon.webp") center / contain no-repeat;
+  opacity: 0.35;
+}
+.backdrop-city {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+.backdrop-city-far {
+  height: 52vh;
+  background-image: url("/art/skyline-far.webp");
+  opacity: 0.75;
+}
+.backdrop-city-near {
+  bottom: -2vh;
+  height: 42vh;
+  background-image: url("/art/skyline-near.webp");
+}
+.backdrop-fog {
+  left: -25%;
+  width: 150%;
+  animation: fog-drift 70s ease-in-out infinite alternate;
+}
+.backdrop-fog-high {
+  top: 18vh;
+  height: 40vh;
+  background:
+    radial-gradient(ellipse 40% 50% at 30% 50%, rgb(120 138 168 / 0.06), transparent 70%),
+    radial-gradient(ellipse 35% 45% at 75% 40%, rgb(120 138 168 / 0.05), transparent 70%);
+}
+.backdrop-fog-low {
+  bottom: -8vh;
+  height: 30vh;
+  background: url("/art/fog.webp") left bottom / auto 100% repeat-x;
+  opacity: 0.5;
+  animation-duration: 50s;
+  animation-direction: alternate-reverse;
+}
+.backdrop-embers {
+  inset: 0;
+}
+.backdrop-embers > span {
+  position: absolute;
+  bottom: -10px;
+  border-radius: 50%;
+  background: #e8cf98;
+  box-shadow: 0 0 6px 2px rgb(217 184 120 / 0.4);
+  opacity: 0;
+  animation: ember-rise linear infinite;
+}
+@keyframes fog-drift {
+  from {
+    transform: translateX(-6%);
+  }
+  to {
+    transform: translateX(6%);
+  }
+}
+@keyframes ember-rise {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.7;
+  }
+  70% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: translate(var(--drift), -85vh);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop * {
+    animation: none !important;
+  }
+  .backdrop-embers {
+    display: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

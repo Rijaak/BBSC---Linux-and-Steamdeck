@@ -1,0 +1,47 @@
+out/
+__pycache__/
+user/
+*.mp4
+bbport.ini
+fsr4_shaders/
+# Shader packs copied in for a release (scripts/shader_pack.py current)
+shader_packs/
+# The launcher's FSR 4.1.1 download (fsr4vk, GPLv3) in a source tree
+/fsr4vk/
+pgo/
+*.png
+last_run.log
+dist/
+packaging/runtime-paths.nix
+fsr4_411/
+vkd3d-proton.cache
+tools/fsr4cap/*.exe
+perf.data
+# Local leftovers: patch backups, generated SPIR-V, analysis outputs, test saves and routes
+*.orig
+/*.spv
+/1060/
+/docs/savedata_route/
+/docs/route*.txt
+/docs/route_run.log
+/bloodborne_upscalers_*.md
+mods.json
+patches.json
+# Local: game logs, messages and archives from users, internal plans
+/logs/
+/message*.txt
+/*.zip
+/docs/ISSUE_ACTION_PLAN_*.md
+# AMD FidelityFX DLLs (FSR 4.1.1 is built from the user's own): never in the repository
+*.dll
+!launcher/bloodborne.png
+!docs/screenshots/*.png
+# The co-op art's pieces (scripts/coop_art.py packs them into gpu/art/coop_art.bin).
+!gpu/art/coop/*.png
+# Local: game logs, messages and archives from users, internal plans
+/logs/
+/message*.txt
+/*.zip
+/docs/ISSUE_ACTION_PLAN_*.md
+# AMD FidelityFX DLLs (FSR 4.1.1 is built from the user's own): never in the repository
+*.dll

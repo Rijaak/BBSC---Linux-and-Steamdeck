@@ -1,0 +1,61 @@
+/* C interface of the GPU library (gpu/): shadPS4's Liverpool/Vulkan video core,
+ * GnmDriver, VideoOut and kernel event queues, adapted to the native loader. */
+#ifndef BBGPU_H
+#define BBGPU_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct {
+    const char *title;          /* window title */
+    const char *serial;         /* CUSA id, names the pipeline cache */
+    const char *user_dir;       /* pipeline cache/logs directory */
+    uint32_t sdk_version;       /* from the eboot's procparam */
+    uint32_t psf_attributes;    /* param.sfo ATTRIBUTE */
+    int32_t width, height;      /* initial window size */
+} BbGpuConfig;
+/* Registers kernel event queues (needed with or without graphics). */
+void bbgpu_register_kernel(void);
+/* Co-op: the game folder and param.sfo identity for the network and PSN libraries. */
+void bbnet_configure(const char *app0, const char *serial, const char *title, const char *app_ver);
+/* Creates window, Vulkan device, presenter and GPU command processor. */
+int bbgpu_init(const BbGpuConfig *config);
+/* Function for an imported NID ("NID#lib#mod"), or 0 when the GPU library does not provide it. */
+uintptr_t bbgpu_resolve(const char *scoped_nid);
+/* Called first by the loader's SIGSEGV handler: 1 when a GPU page-tracking fault was handled. */
+int bbgpu_handle_fault(void *ucontext, void *address);
+/* Writes out the log lines still queued for the log's writer thread (BB_LOG_FILE and stderr):
+ * called before the process ends by any path that skips exit handlers (_exit, TerminateProcess). */
+void bbgpu_log_flush(void);
+/* BB_WRITE_LOG=1: prints the logged GPU-side writes to guest memory near the fault. */
+void bbgpu_dump_guest_writes(void *ucontext);
+/* Keyboard text entry through the game window (IME dialog). begin returns 0 when
+ * no window exists; poll returns 0 typing, 1 confirmed, 2 cancelled (UTF-8 text). */
+int bbgpu_text_input_begin(const char *initial_utf8, const char *prompt_utf8);
+int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
+/* From the game's pad reads (its own thread): runs the save editor page's queued changes. */
+void bbgpu_game_thread_tick(void);
+/* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
+int bbgpu_overlay_captures_input(void);
+/* 1 while the game should be silent: bbport.ini mute_unfocused is on and the window does not
+ * have focus. Safe from any thread (the audio ports read it for every buffer). */
+int bbgpu_audio_muted(void);
+/* Mouse for the game (runtime_pad.c). enable asks the window to hold the mouse in relative mode
+ * while the game window has focus and neither the settings menu nor the text dialog is open.
+ * take returns the motion (counts), wheel steps and buttons (SDL_BUTTON_MASK, held or clicked)
+ * since the last call, and 1 while the mouse is held. Leaving or entering that mode drops what
+ * has not been taken. */
+void bbgpu_mouse_enable(int enabled);
+int bbgpu_mouse_take(float *dx, float *dy, float *wheel, uint32_t *buttons);
+/* The native mouse camera: motion (counts) goes to `turn` at once, from the window thread,
+ * instead of to bbgpu_mouse_take, and `drop` is called whenever the mouse is taken or let go.
+ * Null turn: off. */
+void bbgpu_mouse_set_direct(void (*turn)(float dx, float dy), void (*drop)(void));
+/* Patches the loaded image before the game runs (image still writable): libGnm entry hooks. */
+void bbgpu_patch_image(unsigned char *image, uint64_t size);
+/* Number of symbols registered by the vendored libraries (diagnostics). */
+unsigned bbgpu_symbol_count(void);
+#ifdef __cplusplus
+}
+#endif
+#endif

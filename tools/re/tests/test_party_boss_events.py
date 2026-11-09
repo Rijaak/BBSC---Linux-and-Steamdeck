@@ -1,0 +1,1008 @@
+# SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Tests for party_boss_events.py on small hand-made event files.
+
+Run: py -3.12 -m unittest discover -s tools\\re\\tests
+"""
+import pathlib
+import struct
+import sys
+import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+import party_boss_events as tool  # noqa: E402
+
+HOST_ENTERED = 12414700
+GUEST_ENTERED = 12414701
+DCX_HEADER = b'DCX\0' + bytes(0x48)  # a DCX header (save_dcx fills in the sizes)
+
+
+def flag_condition(group: int, flag: int) -> tuple[int, int, bytes]:
+    return 3, 0, struct.pack('<BBBxi', group, 1, 0, flag)
+
+
+def phantom_fog_event() -> list[tuple[int, int, bytes]]:
+    """m24_01's 12414731: a white phantom walks into Gascoigne's fog once the host did."""
+    return [
+        (2000, 2, struct.pack('<i', 0)),
+        flag_condition(1, 12411702),
+        flag_condition(1, HOST_ENTERED),
+        (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 1)),
+        (3, 24, struct.pack('<bxxxii', 1, 2410040, 2411800)),
+        (2003, 2, struct.pack('<iBxxx', GUEST_ENTERED, 1)),
+    ]
+
+
+def host_fog_event() -> list[tuple[int, int, bytes]]:
+    """m24_00's 12404840: the fog stays shut for a client until the boss's entrance has run."""
+    return [
+        (1003, 5, struct.pack('<BBxx', 2, 1)),
+        (2005, 3, struct.pack('<iBxxx', 2401800, 0)),
+        flag_condition(2, 12411700),
+        (4, 3, struct.pack('<bxxxiBxxx', 2, 10000, 0)),
+        (3, 24, struct.pack('<bxxxii', 2, 2410040, 2411800)),
+        (2003, 2, struct.pack('<iBxxx', HOST_ENTERED, 1)),
+    ]
+
+
+def boss_intro_event() -> list[tuple[int, int, bytes]]:
+    """m24_01's 12411702: an alive player walking into the arena starts the boss's entrance."""
+    return [
+        flag_condition(1, 12411700),
+        (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 0)),
+        (3, 2, struct.pack('<bBxxii', 1, 1, 10000, 2412805)),
+        (2003, 2, struct.pack('<iBxxx', 72410511, 1)),
+        (2003, 2, struct.pack('<iBxxx', HOST_ENTERED, 1)),
+    ]
+
+
+def build_emevd(events: dict[int, list[tuple[int, int, bytes]]],
+                parameters: dict[int, list[tuple[int, int, int, int]]] | None = None) -> bytes:
+    """An emevd laid out like the game's: events, instructions, arguments, params, linked
+    files, strings. `parameters`: per event, (instruction index, target byte, source byte,
+    length) entries."""
+    parameters = parameters or {}
+    records, args = [], bytearray()
+    entries = []
+    param_table = bytearray()
+    for event, instructions in events.items():
+        own = parameters.get(event, [])
+        entries.append((event, len(instructions), len(records) * 32, len(own),
+                        len(param_table) if own else -1))
+        for entry in own:
+            param_table += struct.pack('<qqqii', *entry, 0)
+        for bank, ident, payload in instructions:
+            records.append((bank, ident, len(payload), len(args)))
+            args += payload
+            args += bytes(-len(args) % 4)
+    params = bytes(param_table) or b'P' * 24
+    linked = struct.pack('<q', 0)
+    strings = 'm24_01'.encode('utf-16-le') + bytes(4)
+    event_offset = 144
+    instruction_offset = event_offset + len(entries) * 48
+    args_offset = instruction_offset + len(records) * 32
+    params_offset = args_offset + len(args)
+    linked_offset = params_offset + len(params)
+    strings_offset = linked_offset + len(linked)
+    total = strings_offset + len(strings)
+    out = bytearray(b'EVD\0' + struct.pack('<III', 0xFF00, 0xCC, total))
+    out += struct.pack('<16q', len(entries), event_offset, len(records), instruction_offset,
+                       0, args_offset, 0, args_offset, max(len(param_table) // 32, 1),
+                       params_offset, 1, linked_offset, len(args), args_offset, len(strings),
+                       strings_offset)
+    for event, count, first, param_count, param_offset in entries:
+        out += struct.pack('<qqqqqii', event, count, first, param_count, param_offset, 0, 0)
+    for bank, ident, length, offset in records:
+        out += struct.pack('<iiqqq', bank, ident, length, offset, -1)
+    return bytes(out + args + params + linked + strings)
+
+
+def read_events(emevd: bytes) -> dict[int, list[tuple[int, int, bytes]]]:
+    fields = struct.unpack_from('<16q', emevd, 16)
+    events = {}
+    for index in range(fields[0]):
+        event, count, first, *_ = struct.unpack_from('<qqqqqii', emevd, fields[1] + index * 48)
+        events[event] = []
+        for k in range(count):
+            bank, ident, length, offset, _ = struct.unpack_from(
+                '<iiqqq', emevd, fields[3] + first + k * 32)
+            at = fields[13] + offset
+            events[event].append((bank, ident, emevd[at:at + length]))
+    return events
+
+
+def strings_of(emevd: bytes) -> bytes:
+    fields = struct.unpack_from('<16q', emevd, 16)
+    return emevd[fields[15]:fields[15] + fields[14]]
+
+
+class GuestsEnterBossFogFirst(unittest.TestCase):
+    def test_a_dropped_banner_shows_none(self):
+        """A banner event drop_banners is given shows none (id 0 is out of SetTextEffect's range)."""
+        banner = (2007, 2, struct.pack('<i', tool.DOWNED_BANNER_ID))
+        other = (2007, 2, struct.pack('<i', 16))
+        edits: list = []
+        patched, count = tool.drop_banners(build_emevd({12900192: [banner], 12900193: [banner, other]}),
+                                           {12900192}, edits)
+        events = read_events(patched)
+        self.assertEqual(count, 1)
+        self.assertEqual(events[12900192], [(2007, 2, struct.pack('<i', 0))])
+        self.assertEqual(events[12900193], [banner, other])
+        self.assertEqual(edits[0]['event'], 12900192)
+
+    def test_the_chalice_unlocked_banner_shows_again(self):
+        """Kaniel 2026-11-01: the chalice dungeons' UNLOCKED (m29 12900192, slot 15) was gone; YOU ARE DOWN is
+        the HUD patch's own banner now (CoopDownedBanner), so no event loses its banner."""
+        self.assertEqual(tool.DROPPED_BANNER_EVENTS, {})
+
+    """A white phantom's boss fog event waits for the host's "entered" flag, so a guest could
+    never enter first and was stuck behind the fog after a world reset."""
+
+    def setUp(self):
+        self.original = build_emevd({12414731: phantom_fog_event(),
+                                     12414730: host_fog_event(),
+                                     12411702: boss_intro_event()})
+        self.patched, self.count = tool.open_boss_fog_for_guests(self.original)
+        self.events = read_events(self.patched)
+
+    def test_the_guest_no_longer_waits_for_the_host(self):
+        bank, ident, payload = self.events[12414731][2]
+        self.assertEqual((bank, ident), (3, 0))
+        self.assertEqual(struct.unpack_from('<i', payload, 4)[0], HOST_ENTERED)
+        self.assertEqual(payload[0], tool.UNUSED_GROUP)
+        self.assertEqual(self.events[12414731][1][2][0], 1, 'other conditions stay')
+
+    def test_a_guest_entering_counts_as_the_host_entering(self):
+        # The boss starts (AI, HP bar) on the host's "entered" flag, so the guest sets it too.
+        bank, ident, payload = self.events[12414731][5]
+        self.assertEqual((bank, ident), (2003, 22))
+        self.assertEqual(struct.unpack('<iiB', payload[:9]), (HOST_ENTERED, GUEST_ENTERED, 1))
+
+    def test_a_guest_sees_the_fog_open_before_the_boss_entrance(self):
+        # The host's fog event opens the fog until the boss's entrance, but skipped that for a
+        # client, so a guest arriving first (Cleric Beast) faced a fog it could not enter.
+        bank, ident, payload = self.events[12414730][0]
+        self.assertEqual((bank, ident), (1003, 5))
+        self.assertEqual(payload[:2], bytes([2, tool.NEVER]))
+        self.assertEqual(self.events[12414730][1:], read_events(self.original)[12414730][1:])
+        self.assertEqual(self.count, 4)
+
+    def test_a_guest_walking_into_the_arena_starts_the_boss(self):
+        # The boss's entrance waited for an alive (host) player in the arena.
+        bank, ident, payload = self.events[12411702][1]
+        self.assertEqual((bank, ident), (4, 3))
+        self.assertEqual(payload[0], tool.UNUSED_GROUP)
+        self.assertEqual(self.events[12411702][2][2][0], 1, 'the arena check stays')
+
+    def test_the_rest_of_the_file_still_lines_up(self):
+        self.assertEqual(strings_of(self.patched), strings_of(self.original))
+        self.assertEqual(struct.unpack_from('<I', self.patched, 12)[0], len(self.patched))
+        fields = struct.unpack_from('<16q', self.patched, 16)
+        self.assertEqual(self.patched[fields[9]:fields[9] + 24], b'P' * 24)
+
+    def test_patching_twice_changes_nothing(self):
+        again, count = tool.open_boss_fog_for_guests(self.patched)
+        self.assertEqual((again, count), (self.patched, 0))
+
+
+
+ROM_DIVED = 13204800
+ROM_BOSS_ENTRANCE = 13201802
+
+
+def rom_phantom_fog_event() -> list[tuple[int, int, bytes]]:
+    """m32_00's 13204831: a white phantom walks through the fog by the lake edge once Rom's
+    entrance ran and the host dived."""
+    return [
+        (2000, 2, struct.pack('<i', 0)),
+        (1003, 2, struct.pack('<BBxxi', 0, 1, 13201800)),
+        (3, 0, struct.pack('<BBBxi', 1, 0, 0, 13201800)),
+        flag_condition(1, ROM_BOSS_ENTRANCE),
+        flag_condition(1, ROM_DIVED),
+        (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 1)),
+        (3, 24, struct.pack('<bxxxii', 1, 3200800, 3201800)),
+        (0, 0, bytes([0, 1, 1, 0])),
+        (2004, 14, struct.pack('<iiii', 10000, 3202800, 101130, 0)),
+    ]
+
+
+def rom_dive_event() -> list[tuple[int, int, bytes]]:
+    """m32_00's 13204821: anyone walking into the drop once the host dived gets 5 s of no death
+    (2004:15) for the fall."""
+    return [
+        (2000, 2, struct.pack('<i', 0)),
+        flag_condition(1, ROM_DIVED),
+        (3, 2, struct.pack('<bBxxii', 1, 1, 10000, 3202800)),
+        (0, 0, bytes([0, 1, 1, 0])),
+        (2004, 15, struct.pack('<iB3x', 10000, 1)),
+        (1001, 0, struct.pack('<f', 5.0)),
+        (2004, 15, struct.pack('<iB3x', 10000, 0)),
+        (2003, 2, struct.pack('<iBxxx', ROM_DIVED + 1, 1)),
+        (1000, 4, struct.pack('<i', 1)),
+    ]
+
+
+class GuestsDiveIntoRomsLakeFirst(unittest.TestCase):
+    """Kaniel 2026-10-29: by Rom's lake only the host could pass the fog the first time, and a
+    guest who went over the edge first died from the fall (the drop's no-death waited for the
+    host's dive), and the boss never started."""
+
+    def setUp(self):
+        self.original = build_emevd({13204831: rom_phantom_fog_event(),
+                                     13204821: rom_dive_event()})
+        self.patched, self.count = tool.let_guests_dive_first(
+            self.original, tool.LAKE_DIVE_EVENTS['m32_00_00_00.emevd.dcx'])
+        self.events = read_events(self.patched)
+
+    def test_the_fog_opens_for_a_guest_before_the_host_dives(self):
+        fog = self.events[13204831]
+        for k in (3, 4):
+            self.assertEqual(fog[k][2][0], tool.UNUSED_GROUP)
+        self.assertEqual(fog[2][2], read_events(self.original)[13204831][2][2],
+                         'the boss-dead check stays')
+        self.assertEqual(fog[5][2][0], 1, 'the phantom check stays')
+
+    def test_a_guest_diving_first_lives_through_the_fall(self):
+        dive = self.events[13204821]
+        self.assertEqual(dive[1][2][0], tool.UNUSED_GROUP)
+        self.assertEqual(dive[2][2][0], 1, 'the drop area check stays')
+
+    def test_a_guest_diving_first_starts_the_boss(self):
+        bank, ident, payload = self.events[13204821][7]
+        self.assertEqual((bank, ident), (2003, 22))
+        self.assertEqual(struct.unpack('<iiB', payload[:9]), (ROM_DIVED, ROM_DIVED + 1, 1))
+        self.assertEqual(self.count, 4)
+
+    def test_the_file_still_checks_out(self):
+        edits: list = []
+        tool.let_guests_dive_first(self.original, tool.LAKE_DIVE_EVENTS['m32_00_00_00.emevd.dcx'],
+                                   edits)
+        tool.validate(self.original, self.patched, edits)
+        self.assertEqual(strings_of(self.patched), strings_of(self.original))
+
+    def test_patching_twice_changes_nothing(self):
+        again, count = tool.let_guests_dive_first(
+            self.patched, tool.LAKE_DIVE_EVENTS['m32_00_00_00.emevd.dcx'])
+        self.assertEqual((again, count), (self.patched, 0))
+
+
+def init_insight(amount: int) -> tuple[int, int, bytes]:
+    return 2000, 0, struct.pack('<iii', 0, tool.INSIGHT_EVENT, amount)
+
+
+class GuestsEarnInsight(unittest.TestCase):
+    """Kaniel 2026-10-11: party guests never got insight from finding or killing bosses. Every
+    insight award runs common event 9350 (SpEffect 4680 once per point), which ends for a client,
+    and some of the map events that start it end for a client or wait for an alive player."""
+
+    def test_the_insight_award_runs_for_a_client(self):
+        award = [(1003, 6, struct.pack('<BBxx', 0, 1)),
+                 (2004, 8, struct.pack('<iiB', 10000, 4680, 0))]
+        patched, count = tool.patch_client_events(build_emevd({9350: award}),
+                                                  tool.CLIENT_EVENTS['common.emevd.dcx'])
+        self.assertEqual(read_events(patched)[9350][0][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(count, 1)
+
+    def test_the_events_that_award_insight_run_for_a_guest(self):
+        original = build_emevd({
+            # m24_01 12410995: a spot that gives 1 insight, ends for a client.
+            12410995: [(1003, 6, struct.pack('<BBxx', 0, 1)), init_insight(1)],
+            # m24_01 12410834: ends unless the player is alive (group 15).
+            12410834: [(4, 3, struct.pack('<bxxxiBxxx', 15, 10000, 0)),
+                       (1000, 2, struct.pack('<BBbx', 0, 0, 15)), init_insight(3)],
+            # No insight: left alone.
+            12410996: [(1003, 6, struct.pack('<BBxx', 0, 1)),
+                       (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 0))],
+        })
+        patched, count = tool.let_guests_earn_insight(original)
+        events = read_events(patched)
+        self.assertEqual(events[12410995][0][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(events[12410834][0][2][0], tool.UNUSED_GROUP,
+                         'an alive check no longer ends the event for a phantom')
+        self.assertEqual(events[12410834][1:], read_events(original)[12410834][1:])
+        self.assertEqual(events[12410996], read_events(original)[12410996])
+        self.assertEqual(count, 2)
+        self.assertEqual(tool.let_guests_earn_insight(patched), (patched, 0))
+
+    def test_only_the_local_players_alive_check_moves(self):
+        original = build_emevd({13401801: [
+            (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 2)),  # a black phantom: stays
+            (4, 3, struct.pack('<bxxxiBxxx', 2, 2410800, 0)),  # another character: stays
+            init_insight(1)]})
+        patched, count = tool.let_guests_earn_insight(original)
+        self.assertEqual((patched, count), (original, 0))
+
+
+class GuestsUseTheDreamShops(unittest.TestCase):
+    """Kaniel 2026-10-11: guests could not use the insight shop, and often did not see the
+    Hunter Chief Emblem (10,000 echoes) at the messengers. The insight messenger (m21_00 event
+    12105043, 2100219) wakes, and sets the flag its talk opens the shop on (12105045), only for a
+    non-client; the messengers' shop lines (event 12101000, slots 0-9: flags 12101000-12101009,
+    e.g. 12101004 for the emblem) are kept in step with a host whose Dream is not there."""
+
+    DREAM = 'm21_00_00_00.emevd.dcx'
+
+    def test_the_insight_messenger_wakes_for_a_guest(self):
+        wake = [(2000, 2, struct.pack('<i', 0)),
+                (1003, 101, struct.pack('<BBxxi', 0, 1, 12100320)),
+                (1003, 6, struct.pack('<BBxx', 0, 1)),
+                (2003, 2, struct.pack('<iBxxx', 12105045, 1))]
+        patched, count = tool.patch_client_events(build_emevd({12105043: wake}),
+                                                  tool.CLIENT_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12105043][2][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(count, 1)
+
+    def test_the_shop_lines_unlock_in_the_guests_own_dream(self):
+        lines = [(1003, 2, struct.pack('<BBBxi', 0, 1, 0, 0)),
+                 (3, 4, struct.pack('<BBxxiB', 0, 3, 0, 1)),
+                 (2004, 26, struct.pack('<ii', 0, 1))]
+        patched, count = tool.make_events_local(build_emevd({12101000: lines}),
+                                                tool.LOCAL_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12101000][0], (2000, 2, bytes(4)))
+        self.assertEqual(count, 1)
+
+    # Kaniel 2026-10-21: with several players in the Dream the shop messengers rose from the bath
+    # and played their tune again and again. 12105040 (restarts when done) rises them while this
+    # player's shop menu is open (12105041) and sinks them after; kept in step, the other
+    # player's end of it restarted it here.
+    MESSENGERS = [(2003, 18, struct.pack('<iiB3x', 2100211, 7001, 1)),
+                  (3, 0, struct.pack('<BBxxi', 0, 1, 12105041)),
+                  (2003, 18, struct.pack('<iiB3x', 2100211, 7005, 0)),
+                  (3, 0, struct.pack('<BBxxi', 0, 0, 12105041)),
+                  (1000, 4, struct.pack('<i', 1))]
+
+    def test_the_shop_messengers_rise_for_each_players_own_shop(self):
+        patched, count = tool.make_events_local(build_emevd({12105040: self.MESSENGERS}),
+                                                tool.LOCAL_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12105040][0], (2000, 2, bytes(4)))
+        self.assertEqual(read_events(patched)[12105040][1:], read_events(
+            build_emevd({12105040: self.MESSENGERS}))[12105040])
+        self.assertEqual(count, 1)
+
+
+class GuestsEnterChaliceDungeons(unittest.TestCase):
+    """Team altars (2026-10-18): a party guest joined its teammate's chalice dungeon from Chalice
+    Dungeon Search and picked its layer, but never warped. The altar's talk sets the layer flag
+    (72100420 + altar); m21_00 event 12107100 (a slot per altar) waits on it and warps, but ends
+    for a client (1003:6 state 1). For a guest it runs too, and only in the guest's own game:
+    one player's warp is not the other's."""
+
+    DREAM = 'm21_00_00_00.emevd.dcx'
+    WARP = [(1003, 6, struct.pack('<BBxx', 0, 1)),
+            (3, 0, struct.pack('<BBxxi', 0, 1, 0)),
+            (1001, 0, struct.pack('<f', 4.0)),
+            (2003, 2, struct.pack('<iBxxx', 9020, 0)),
+            (2004, 14, struct.pack('<iiii', 10000, 0, 101164, 0))]
+
+    def test_the_altar_warp_runs_for_a_guest(self):
+        patched, count = tool.patch_client_events(build_emevd({12107100: self.WARP}),
+                                                  tool.CLIENT_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12107100][0][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(count, 1)
+
+    def test_the_altar_warp_is_each_players_own(self):
+        patched, count = tool.make_events_local(build_emevd({12107100: self.WARP}),
+                                                tool.LOCAL_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12107100][0], (2000, 2, bytes(4)))
+        self.assertEqual(count, 1)
+
+    # Rig chalice-team3 (2026-10-20): the layer's warp (12107200, a slot per layer: 72100300 +
+    # layer on, cleared, then 2003:49 to the dungeon's respawn point) was kept in step, so the
+    # host's warp ran in every teammate's game and took each one in the Dream along.
+    LAYER_WARP = [(3, 0, struct.pack('<BBxxi', 0, 1, 0)),
+                  (2003, 2, struct.pack('<iBxxx', 0, 0)),
+                  (2003, 49, struct.pack('<i', 0)),
+                  (2003, 2, struct.pack('<iBxxx', 0, 1))]
+
+    def test_the_layer_warp_is_each_players_own(self):
+        patched, count = tool.make_events_local(build_emevd({12107200: self.LAYER_WARP}),
+                                                tool.LOCAL_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12107200][0], (2000, 2, bytes(4)))
+        self.assertEqual(count, 1)
+
+
+class GuestsUseTheYahargulMummy(unittest.TestCase):
+    """Provi's day 4 (v1.3.1): after The One Reborn, the mummy at the end of Yahar'gul's hall
+    could be inspected only by the host, and only the host was taken to the Lecture Building.
+    m28_00 event 12800430 (the action button 2800020 on its warp object 2801500, the pose, then
+    2003:49 to m32's 3202959) ends for a client (1003:6 state 1). For a guest it runs too, and
+    only in the guest's own game: each player inspects it and travels on its own."""
+
+    YAHARGUL = 'm28_00_00_00.emevd.dcx'
+    MUMMY = [(1003, 6, struct.pack('<BBxx', 0, 1)),
+             (3, 24, struct.pack('<bxxxii', 0, 2800020, 2801500)),
+             (2004, 41, struct.pack('<iiii', 10000, 0, 2801500, 220)),
+             (2003, 18, struct.pack('<iii', 10000, 101169, 0)),
+             (1001, 1, struct.pack('<i', 180)),
+             (2003, 49, struct.pack('<i', 3202959))]
+
+    def test_a_guest_can_inspect_the_mummy(self):
+        original = build_emevd({12800430: self.MUMMY})
+        patched, count = tool.patch_client_events(original,
+                                                  tool.CLIENT_EVENTS.get(self.YAHARGUL, set()))
+        events, before = read_events(patched)[12800430], read_events(original)[12800430]
+        self.assertEqual(events[0][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(events[1:], before[1:])
+        self.assertEqual(count, 1)
+
+    def test_each_player_travels_on_its_own(self):
+        patched, count = tool.make_events_local(build_emevd({12800430: self.MUMMY}),
+                                                tool.LOCAL_EVENTS.get(self.YAHARGUL, set()))
+        self.assertEqual(read_events(patched)[12800430][0], (2000, 2, bytes(4)))
+        self.assertEqual(count, 1)
+
+    def test_the_button_needs_no_point_on_the_object(self):
+        """Row 2800020 sits on the object's dummy poly 200 with a 60 degree sector; on a guest's
+        game the press never counts, as on the host's without the poly (rig 2026-10-30). Row 6031
+        (Inspect, 2 m, any side) has neither; the rest of the event stays."""
+        original = build_emevd({12800430: self.MUMMY})
+        edits = []
+        patched, count = tool.use_plain_action_buttons(
+            original, tool.PLAIN_ACTION_BUTTONS.get(self.YAHARGUL, {}), edits)
+        events, before = read_events(patched)[12800430], read_events(original)[12800430]
+        self.assertEqual(events[1], (3, 24, struct.pack('<bxxxii', 0, 6031, 2801500)))
+        self.assertEqual(events[0], before[0])
+        self.assertEqual(events[2:], before[2:])
+        self.assertEqual(count, 1)
+        self.assertEqual([(edit['event'], edit['instruction']) for edit in edits],
+                         [(12800430, 1)])
+
+    def test_another_row_stops_the_patch(self):
+        mummy = list(self.MUMMY)
+        mummy[1] = (3, 24, struct.pack('<bxxxii', 0, 2800021, 2801500))
+        with self.assertRaises(tool.EventPatchError):
+            tool.use_plain_action_buttons(build_emevd({12800430: mummy}),
+                                          tool.PLAIN_ACTION_BUTTONS[self.YAHARGUL])
+
+
+class ChaliceBossesUnlockEachPlayersShop(unittest.TestCase):
+    """seixas 2026-10-27: a team beat the Keeper of the Old Lords in the Central Pthumeru Chalice
+    twice, but the Bath shop never sold the Bone Ash set. The story layouts start m29 event
+    12906824 (m29_20_90_00: the layer 2 boss flag 12901801, then 5090 Bone Ash; m29_31_90_00:
+    5091 Madman), which sets the shop flag once the boss flag is on. The shop flags are each
+    player's own (5000-5299), so the other player's "set" is ignored; kept in step, the first
+    game to run the event ended it in the other's, which then never set its own flag."""
+
+    CHALICE = 'm29.emevd.dcx'
+    UNLOCK = [(3, 0, struct.pack('<BBxxi', 0, 1, 0)),
+              (2003, 2, struct.pack('<iBxxx', 0, 1))]
+
+    def test_the_shop_unlock_runs_in_each_players_own_game(self):
+        original = build_emevd({12906824: self.UNLOCK}, {12906824: [(0, 4, 0, 4), (1, 0, 4, 4)]})
+        patched, count = tool.make_events_local(original, tool.LOCAL_EVENTS[self.CHALICE])
+        self.assertEqual(count, 1)
+        self.assertEqual(read_events(patched)[12906824][0], (2000, 2, bytes(4)))
+        self.assertEqual(read_events(patched)[12906824][1:], read_events(original)[12906824])
+        self.assertEqual(parameters_of(patched, 12906824), [(1, 4, 0, 4), (2, 0, 4, 4)])
+
+
+class NoFogWallsInChaliceDungeons(unittest.TestCase):
+    """Kaniel 2026-10-19: a fog wall stood at the start of a chalice dungeon in a party. The chalice
+    maps' event 12907600 (m29, started per block with its wall object and fog) is the common
+    multiplayer wall event 7600 again: walls off, then on while the multiplayer state is 3 or 2.
+    The emulator turns 7600's walls off by a list of the main maps' objects; a chalice dungeon's
+    come from its blocks, so the event's "multiplayer" check never matches instead."""
+
+    CHALICE = 'm29.emevd.dcx'
+    WALL = [(2000, 2, struct.pack('<i', 0)),
+            (2005, 3, struct.pack('<ii', 0, 0)),
+            (2006, 1, struct.pack('<ii', 0, 1)),
+            (3, 6, struct.pack('<bBxx', -1, 3)),
+            (3, 6, struct.pack('<bBxx', -1, 2)),
+            (0, 0, struct.pack('<bBBx', 0, 1, 0xFF)),
+            (2005, 3, struct.pack('<ii', 0, 1)),
+            (2006, 2, struct.pack('<i', 0)),
+            (3, 6, struct.pack('<bBxx', -2, 3)),
+            (3, 6, struct.pack('<bBxx', -2, 2)),
+            (0, 0, struct.pack('<bBBx', 0, 0, 0xFE)),
+            (1000, 4, struct.pack('<i', 1))]
+
+    def test_the_wall_never_shows_in_a_party(self):
+        patched, count = tool.patch_chalice_walls(build_emevd({12907600: self.WALL}))
+        events = read_events(patched)[12907600]
+        self.assertEqual([events[3][2][1], events[4][2][1]], [tool.NEVER, tool.NEVER])
+        self.assertEqual([events[8][2][1], events[9][2][1]], [3, 2], "the hide side stays")
+        self.assertEqual(count, 2)
+
+    def test_other_events_keep_their_checks(self):
+        original = build_emevd({12907601: self.WALL})
+        self.assertEqual(tool.patch_chalice_walls(original), (original, 0))
+
+
+class LudwigsArenaWallGoesAfterHim(unittest.TestCase):
+    """Kaniel 2026-11-04: after Ludwig's fight a fog stood in his arena for everyone, even after
+    a rejoin. m34's 13400010 shows wall 3401801 (fog 3403801) while the multiplayer state is 3 or
+    2 or Ludwig (9471) lives, and hides it only once the game is out of multiplayer (group -2)
+    and 9471 is on. A party is always in multiplayer, so it never went. Both multiplayer sides
+    never match now: the wall stands while Ludwig lives and goes once he is dead."""
+
+    WALL = [(2000, 2, struct.pack('<i', 0)),
+            (2005, 3, struct.pack('<ii', 3401801, 0)),
+            (2006, 1, struct.pack('<ii', 3403801, 1)),
+            (3, 6, struct.pack('<bBxx', -1, 3)),
+            (3, 6, struct.pack('<bBxx', -1, 2)),
+            (3, 0, struct.pack('<bBBxi', -1, 0, 0, 9471)),
+            (0, 0, struct.pack('<bBBx', 0, 1, 0xFF)),
+            (2005, 3, struct.pack('<ii', 3401801, 1)),
+            (2006, 2, struct.pack('<i', 3403801)),
+            (3, 6, struct.pack('<bBxx', -2, 3)),
+            (3, 6, struct.pack('<bBxx', -2, 2)),
+            (0, 0, struct.pack('<bBBx', 0, 0, 0xFE)),
+            (3, 0, struct.pack('<bBBxi', 1, 1, 0, 9471)),
+            (0, 0, struct.pack('<bBBx', 0, 1, 1)),
+            (1000, 4, struct.pack('<i', 1))]
+
+    def patched(self, event=13400010):
+        original = tool.save_dcx(DCX_HEADER, build_emevd({event: self.WALL}))
+        output, edits, counts = tool.patch_file('m34_00_00_00.emevd.dcx', original)
+        return output and read_events(tool.load_dcx(output))[event]
+
+    def test_no_multiplayer_check_matches_on_either_side(self):
+        events = self.patched()
+        self.assertEqual([events[k][2][1] for k in (3, 4, 9, 10)], [tool.NEVER] * 4)
+
+    def test_the_wall_still_waits_for_ludwig(self):
+        events = self.patched()
+        self.assertEqual(events[5], self.WALL[5])
+        self.assertEqual(events[12], self.WALL[12])
+
+    def test_other_events_keep_their_checks(self):
+        self.assertIsNone(self.patched(13400011))
+
+
+class GuestsOpenChaliceBossDoors(unittest.TestCase):
+    """Kaniel 2026-10-19: a chalice dungeon's boss door said "Only the beckoner can open this door"
+    to guests. The door (ObjActParam 2901900-2901920) asks for SpEffect 9920, which m29's event 0
+    puts on the player (2004:8 10000 9920) after skipping that line for a client (1003:5 1 1).
+    The skip never matches, so every party member gets the effect and opens the door."""
+
+    OPENING = [(1003, 5, struct.pack('<BBxx', 1, 1)),
+               (2004, 8, struct.pack('<iii', 10000, 9920, 0)),
+               (1003, 5, struct.pack('<BBxx', 1, 0)),
+               (2003, 22, struct.pack('<iii', 12906660, 12906725, 0))]
+
+    def test_a_guest_gets_the_door_effect(self):
+        patched, count = tool.patch_host_door_effect(build_emevd({0: self.OPENING}))
+        events = read_events(patched)[0]
+        self.assertEqual(events[0][2][:2], bytes([1, tool.NEVER]))
+        self.assertEqual(events[2][2][:2], bytes([1, 0]), "the host's own skip stays")
+        self.assertEqual(count, 1)
+
+    def test_only_the_skip_before_the_effect(self):
+        other = [(1003, 5, struct.pack('<BBxx', 1, 1)), (2004, 8, struct.pack('<iii', 10000, 1, 0))]
+        original = build_emevd({0: other})
+        self.assertEqual(tool.patch_host_door_effect(original), (original, 0))
+
+
+class GuestsKeepTheWanderingNightmares(unittest.TestCase):
+    """Kaniel 2026-10-24 (player Fran): the Wandering Nightmares went missing. Each one's event
+    (m24_00 12400200, a slot per Nightmare) ends once an alive player has its drop's flag, and its
+    slot flag then switches it off at every load; a client skipped the flag check (1003:5 1 1), so
+    a party guest, alive after a trip, ended them all with no kill. The skip never matches."""
+
+    NIGHTMARE = [(1003, 101, struct.pack('<BBBxi', 0, 0, 2, 0)),
+                 (2004, 5, struct.pack('<iB3x', 0, 0)),
+                 (1000, 4, struct.pack('<B3x', 0)),
+                 (1014, 0, b''),
+                 (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 0)),
+                 (1003, 5, struct.pack('<BBxx', 1, 1)),
+                 flag_condition(1, 0),
+                 (0, 0, struct.pack('<bBbx', 0, 1, 1)),
+                 (1001, 0, struct.pack('<f', 0.0))]
+
+    def test_a_guest_needs_the_drop_too(self):
+        edits = []
+        patched, count = tool.keep_one_time_drop_checks(build_emevd({12400200: self.NIGHTMARE}),
+                                                        edits)
+        self.assertEqual(count, 1)
+        self.assertEqual(read_events(patched)[12400200][5][2][:2], bytes([1, tool.NEVER]))
+        self.assertEqual([edit['instruction'] for edit in edits], [5])
+
+    def test_old_yharnams_hide_too(self):
+        hidden = list(self.NIGHTMARE)
+        hidden[1] = (2004, 29, struct.pack('<iB3x', 0, 1))
+        _, count = tool.keep_one_time_drop_checks(build_emevd({12300220: hidden}))
+        self.assertEqual(count, 1)
+
+    def test_not_another_events_client_skip(self):
+        # The same skip with no own-slot start (a boss fog's): left as it is.
+        other = self.NIGHTMARE[3:]
+        original = build_emevd({12404840: other})
+        self.assertEqual(tool.keep_one_time_drop_checks(original), (original, 0))
+
+    def test_not_a_skip_in_another_group(self):
+        other = list(self.NIGHTMARE)
+        other[6] = flag_condition(2, 0)
+        original = build_emevd({12400200: other})
+        self.assertEqual(tool.keep_one_time_drop_checks(original), (original, 0))
+
+
+class GuestsTakeTheChaliceBossReward(unittest.TestCase):
+    """Kaniel 2026-10-20: a Pthumeru Root dungeon's last boss dropped nothing extra. Its reward
+    event (m29 12901693, started by the layer's own event file with the lots as parameters) skips
+    to its gem for a client (1003:105 to label 0, state 1) before the host's extra lot, a gem or
+    the next Root Chalice (2003:4, which gives a client nothing anyway). The skip never matches and
+    the award reaches a client too (2003:36), so every party member rolls its own extra lot."""
+
+    REWARD = [(2000, 2, struct.pack('<i', 0)),
+              (1003, 105, struct.pack('<BBxx', 0, 1)),
+              flag_condition(1, 92905385),
+              (1000, 1, struct.pack('<BBbx', 2, 0, 1)),
+              (2003, 4, struct.pack('<i', 0)),
+              (1000, 103, struct.pack('<i', 1)),
+              (1014, 0, b''),
+              (1003, 105, struct.pack('<BBxx', 4, 1)),
+              (2003, 36, struct.pack('<i', 0)),
+              (1014, 1, b'')]
+
+    def test_a_guest_rolls_the_host_reward(self):
+        edits = []
+        patched, count = tool.patch_chalice_rewards(build_emevd({12901693: self.REWARD}), edits)
+        events = read_events(patched)[12901693]
+        self.assertEqual(events[1][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(events[7][2][:2], bytes([4, tool.NEVER]))
+        self.assertEqual(events[4][:2], (2003, tool.AWARD_ITEM_LOT_INCLUDING_CLIENTS))
+        self.assertEqual(events[8], self.REWARD[8], 'the gem for everyone stays')
+        self.assertEqual(count, 3)
+        self.assertEqual([(edit['instruction'], edit['bank'], edit['id']) for edit in edits],
+                         [(1, 1003, 105), (4, 2003, 36), (7, 1003, 105)])
+
+    def test_other_events_keep_their_checks(self):
+        original = build_emevd({12901694: self.REWARD})
+        self.assertEqual(tool.patch_chalice_rewards(original), (original, 0))
+
+
+class GuestsOpenTheResearchHallDoor(unittest.TestCase):
+    """Kaniel 2026-10-19: every door and gate should open for anyone in the party. The Research
+    Hall's door and device (ObjActParam 3500020, 3500110) are the only ones outside the chalice
+    dungeons that say "Only the beckoner can open this door". They ask for SpEffect 9920, which
+    m35's event 0 gives only when the player is alive in its own world (4:3 15 10000 0, then
+    1000:1 skips the 2004:8 for anyone else). The skip skips nothing now."""
+
+    OPENING = [(2000, 0, struct.pack('<iii', 0, 13501810, 0)),
+               (4, 3, struct.pack('<iiBxxx', 15, 10000, 0)),
+               (1000, 1, struct.pack('<BBbx', 1, 0, 15)),
+               (2004, 8, struct.pack('<iii', 10000, 9920, 0)),
+               (1003, 5, struct.pack('<BBxx', 2, 1))]
+
+    def test_a_guest_gets_the_door_effect(self):
+        edits = []
+        patched, count = tool.patch_host_door_effect(build_emevd({0: self.OPENING}), edits)
+        events = read_events(patched)[0]
+        self.assertEqual(events[2][2][:3], bytes([0, 0, 15]), 'the skip skips nothing')
+        self.assertEqual(events[1], self.OPENING[1], 'the alive check stays')
+        self.assertEqual(events[4][2][:2], bytes([2, 1]), 'the client skip after it stays')
+        self.assertEqual(count, 1)
+        self.assertEqual([(edit['instruction'], edit['bank'], edit['id']) for edit in edits],
+                         [(2, 1000, 1)])
+
+    def test_a_skip_on_another_group_stays(self):
+        other = list(self.OPENING)
+        other[2] = (1000, 1, struct.pack('<BBbx', 1, 0, 14))
+        original = build_emevd({0: other})
+        self.assertEqual(tool.patch_host_door_effect(original), (original, 0))
+
+    def test_another_effect_stays(self):
+        other = list(self.OPENING)
+        other[3] = (2004, 8, struct.pack('<iii', 10000, 4150, 0))
+        original = build_emevd({0: other})
+        self.assertEqual(tool.patch_host_door_effect(original), (original, 0))
+
+
+class GuestsSeeTheNightFall(unittest.TestCase):
+    """Kaniel's playtest 2026-10-17: after Vicar Amelia the host examined the altar's skull, saw
+    the cutscene and the night fell; the guests saw neither. The skull's event (m24_00 12401803:
+    the cutscene and time of day 2, 2002:6) ends for a client (1003:6 state 1) before it waits for
+    the host's press, so a guest's copy was gone when the host's ran."""
+
+    WARD = 'm24_00_00_00.emevd.dcx'
+
+    def skull_event(self) -> list[tuple[int, int, bytes]]:
+        return [(2006, 1, struct.pack('<iBxxx', 2403413, 0)),
+                (1003, 2, struct.pack('<BBBxi', 0, 1, 1, 0)),
+                (1003, 101, struct.pack('<BBxxi', 0, 1, 12401800)),
+                flag_condition(0, 12401800),
+                (1014, 0, b''),
+                (2006, 2, struct.pack('<i', 2403413)),
+                (1003, 6, struct.pack('<BBxx', 0, 1)),
+                (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 0)),
+                (3, 24, struct.pack('<bxxxii', 1, 2400010, 2401801)),
+                (2003, 2, struct.pack('<iBxxx', 9180, 1)),
+                (2002, 6, struct.pack('<iiiiii', 24000030, 0, -1, 24, 10000, 2))]
+
+    def test_the_skull_event_waits_on_a_guest_too(self):
+        original = build_emevd({12401803: self.skull_event()})
+        patched, count = tool.patch_client_events(original, tool.CLIENT_EVENTS[self.WARD])
+        events, before = read_events(patched)[12401803], read_events(original)[12401803]
+        self.assertEqual(events[6][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(count, 1)
+        # Only the host's press starts it: a guest's own press must not (its alive check stays).
+        self.assertEqual(events[7], before[7])
+        self.assertEqual(events[:6] + events[7:], before[:6] + before[7:])
+
+
+class GuestsSeeStoryCutscenes(unittest.TestCase):
+    """Audit 2026-10-25 (Kaniel: everyone is moved but only the host sees the cutscene): story
+    cutscenes whose events end for a client (1003:6 state 1) before the cutscene: Cainhurst's
+    arrival (m25_00 12500000), the Hypogean Gaol's arrival after a kidnapping (common 9422, also
+    a point of insight) and the one after the Nightmare of Mensis' boss (m26_00 12601854). The
+    Dream's endings: GuestsSeeTheEndings."""
+
+    def test_the_story_cutscenes_play_for_a_client(self):
+        for name, event in (('m25_00_00_00.emevd.dcx', 12500000), ('common.emevd.dcx', 9422),
+                            ('m26_00_00_00.emevd.dcx', 12601854)):
+            arrival = [(1003, 2, struct.pack('<BBBxi', 0, 1, 1, 0)),
+                       (1003, 6, struct.pack('<BBxx', 0, 1)),
+                       (2002, 3, struct.pack('<iii', 25000000, 8, 10000))]
+            original = build_emevd({event: arrival})
+            patched, count = tool.patch_client_events(original, tool.CLIENT_EVENTS.get(name, set()))
+            self.assertEqual(read_events(patched)[event][1][2][:2], bytes([0, tool.NEVER]), name)
+            self.assertEqual(count, 1, name)
+
+
+
+class GuestsSeeTheEndings(unittest.TestCase):
+    """Kaniel's players 2026-10-28/29: killing Gehrman played the ending for the host only, the
+    guests' session ended under them and they stayed in the old playthrough. The Dream's endings
+    (m21_00 12100000, 12100002, 12100180) end for a client (1003:6 state 1), 12100000 also unless
+    the local player is alive (4:3 player 10000 type 0, a white phantom is type 1)."""
+
+    DREAM = 'm21_00_00_00.emevd.dcx'
+
+    @staticmethod
+    def ending(alive_check: bool) -> list:
+        instructions = [(2000, 2, struct.pack('<i', 0)),
+                        (1003, 6, struct.pack('<BBxx', 0, 1)),
+                        (3, 0, struct.pack('<bBBxi', 1, 1, 0, 12101800))]
+        if alive_check:
+            instructions.append((4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 0)))
+        return instructions + [(0, 0, struct.pack('<bBbx', 0, 1, 1)),
+                               (2002, 3, struct.pack('<iii', 21000020, 0, 10000)),
+                               (2003, 21, struct.pack('<i', 1))]
+
+    def test_every_ending_plays_for_a_guest(self):
+        self.assertEqual(tool.ENDING_EVENTS[self.DREAM], {12100000, 12100002, 12100180})
+        original = build_emevd({12100000: self.ending(True), 12100002: self.ending(False),
+                                12100010: self.ending(True)})
+        patched, count = tool.let_guests_see_the_endings(original, tool.ENDING_EVENTS[self.DREAM])
+        events, before = read_events(patched), read_events(original)
+        self.assertEqual(count, 3)
+        self.assertEqual(events[12100000][1][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(events[12100000][3][2][0], tool.UNUSED_GROUP,
+                         'the alive check no longer holds it for a phantom')
+        self.assertEqual(events[12100000][4:], before[12100000][4:])
+        self.assertEqual(events[12100002][1][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(events[12100010], before[12100010], 'not an ending')
+        self.assertEqual(tool.let_guests_see_the_endings(patched, tool.ENDING_EVENTS[self.DREAM]),
+                         (patched, 0))
+
+    def test_the_dream_file_patch_validates(self):
+        original = build_emevd({12100000: self.ending(True), 12100180: self.ending(False)})
+        edits: list = []
+        patched, count = tool.let_guests_see_the_endings(original,
+                                                         tool.ENDING_EVENTS[self.DREAM], edits)
+        self.assertEqual(count, 3)
+        tool.validate(original, patched, edits, self.DREAM)
+
+
+class GuestsPickUpGlowingItems(unittest.TestCase):
+    """Kaniel 2026-10-19: in the Abandoned Old Workshop the guests never saw the Small Hair
+    Ornament, Third Umbilical Cord and Old Hunter Bone. Their events (m21_01 12110300-12110302:
+    the sparkle, the action button, the item lot) end for a client and once their own event flag
+    is on (the host's world), and award nothing to a client."""
+
+    WORKSHOP = 'm21_01_00_00.emevd.dcx'
+
+    def ornament_event(self) -> list[tuple[int, int, bytes]]:
+        return [(1003, 2, struct.pack('<BBBxi', 0, 1, 1, 0)),
+                (1003, 6, struct.pack('<BBxx', 0, 1)),
+                (2006, 4, struct.pack('<iii', 2111100, 200, 900201)),
+                (3, 24, struct.pack('<bxxxii', 0, 2110010, 2111100)),
+                (2003, 18, struct.pack('<iii', 10000, 101140, 0)),
+                (2003, 4, struct.pack('<i', 2110800)),
+                (2006, 5, struct.pack('<ii', 2111100, 1))]
+
+    def test_a_guest_gets_the_item_by_its_own_pickup(self):
+        original = build_emevd({12110300: self.ornament_event()})
+        patched, count = tool.let_guests_pick_up_items(
+            original, tool.ACTION_PICKUP_EVENTS[self.WORKSHOP])
+        events, before = read_events(patched)[12110300], read_events(original)[12110300]
+        self.assertEqual(events[0], (1003, 2, struct.pack('<BBBxi', 0, 1, 0, 52110800)))
+        self.assertEqual(events[1][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(events[5], (2003, 36, struct.pack('<i', 2110800)))
+        self.assertEqual(events[2:5] + events[6:], before[2:5] + before[6:])
+        self.assertEqual(count, 3)
+
+    def test_a_phantoms_alive_check_no_longer_ends_it(self):
+        # m24_01 12410510: 4:3 (group 15, player 10000, alive), then 1000:2 ends unless group 15.
+        key = [(4, 3, struct.pack('<bxxxiBxxx', 15, 10000, 0)),
+               (1000, 2, struct.pack('<BBBx', 0, 0, 15)),
+               (1003, 2, struct.pack('<BBBxi', 0, 1, 1, 0)),
+               (3, 24, struct.pack('<bxxxii', 0, 2410060, 2411200)),
+               (2003, 4, struct.pack('<i', 2410990))]
+        patched, count = tool.let_guests_pick_up_items(
+            build_emevd({12410510: key}), tool.ACTION_PICKUP_EVENTS['m24_01_00_00.emevd.dcx'])
+        events = read_events(patched)[12410510]
+        self.assertEqual(events[0][2][0], tool.UNUSED_GROUP)
+        self.assertEqual(events[2][2], struct.pack('<BBBxi', 0, 1, 0, 52410990))
+        self.assertEqual(count, 3)
+
+    def test_another_lot_is_refused(self):
+        event = self.ornament_event()
+        event[5] = (2003, 4, struct.pack('<i', 2110810))
+        with self.assertRaises(tool.EventPatchError):
+            tool.let_guests_pick_up_items(build_emevd({12110300: event}),
+                                          tool.ACTION_PICKUP_EVENTS[self.WORKSHOP])
+
+    def test_each_player_picks_up_its_own(self):
+        self.assertTrue({12110300, 12110301, 12110302} <= tool.LOCAL_EVENTS[self.WORKSHOP])
+
+    def test_a_started_events_lot_still_reaches_the_award(self):
+        # m26 12600125 is started with its lot as a parameter (into 2003:4's bytes 0-3).
+        event = self.ornament_event()
+        event[0] = (1003, 2, struct.pack('<BBBxi', 0, 1, 2, 0))
+        event[5] = (2003, 4, struct.pack('<i', 0))
+        original = tool.save_dcx(DCX_HEADER, build_emevd({12600125: event},
+                                                         {12600125: [(5, 0, 4, 4)]}))
+        output, edits, counts = tool.patch_file('m26_00_00_00.emevd.dcx', original)
+        self.assertEqual(counts['item pickup checks'], 3)
+        events = read_events(tool.load_dcx(output))[12600125]
+        self.assertEqual(events[6][:2], (2003, 36))
+        self.assertEqual(parameters_of(tool.load_dcx(output), 12600125), [(6, 0, 4, 4)])
+
+
+class GuestsWakeMistAmbushes(unittest.TestCase):
+    """Kaniel's playtest 2026-10-20: in the woods on the way into Hemwick the enemies that rise
+    out of the mist rose for everyone, but only when the host came near; a guest running past
+    them woke nothing. Their event (m22_00 12204000, a slot per enemy) waits for the local
+    player near the enemy (3:3) and alive in its own world (4:3 type 0) in one condition group."""
+
+    HEMWICK = 'm22_00_00_00.emevd.dcx'
+
+    def ambush_event(self) -> list[tuple[int, int, bytes]]:
+        return [(1003, 101, struct.pack('<BBxxi', 0, 1, 12204011)),
+                (2004, 5, struct.pack('<iBxxx', 0, 0)),
+                (1000, 4, struct.pack('<i', 0)),
+                (1014, 0, b''),
+                (2004, 5, struct.pack('<iBxxx', 0, 0)),
+                (3, 0, struct.pack('<bBBxi', -1, 1, 0, 9801)),
+                (3, 0, struct.pack('<bBBxi', -1, 1, 0, 9802)),
+                (0, 0, struct.pack('<bBbx', 1, 1, -1)),
+                (3, 3, struct.pack('<bBxxiif', 1, 1, 10000, 0, 0.0)),
+                (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 0)),
+                (3, 0, struct.pack('<bBBxi', 2, 1, 2, 0)),
+                (0, 0, struct.pack('<bBbx', -2, 1, 1)),
+                (0, 0, struct.pack('<bBbx', -2, 1, 2)),
+                (0, 0, struct.pack('<bBbx', 0, 1, -2)),
+                (2004, 5, struct.pack('<iBxxx', 0, 1)),
+                (2003, 18, struct.pack('<iii', 0, 6200, 0))]
+
+    def patch(self, event):
+        original = build_emevd({12204000: event})
+        patched, count = tool.let_guests_wake_ambushes(original, tool.AMBUSH_EVENTS[self.HEMWICK])
+        return read_events(original)[12204000], read_events(patched)[12204000], count, patched
+
+    def test_a_guest_coming_near_wakes_the_enemy(self):
+        before, events, count, _ = self.patch(self.ambush_event())
+        self.assertEqual(count, 1)
+        self.assertEqual(events[9][2][0], tool.UNUSED_GROUP)
+        self.assertEqual(events[:9] + events[10:], before[:9] + before[10:])
+
+    def test_patching_twice_changes_nothing(self):
+        _, _, _, patched = self.patch(self.ambush_event())
+        self.assertEqual(tool.let_guests_wake_ambushes(patched, {12204000}), (patched, 0))
+
+    def test_an_alive_check_in_another_group_stays(self):
+        event = self.ambush_event()
+        event[9] = (4, 3, struct.pack('<bxxxiBxxx', 3, 10000, 0))
+        with self.assertRaises(tool.EventPatchError):
+            self.patch(event)
+
+    def test_an_event_without_the_appear_animation_is_refused(self):
+        event = self.ambush_event()
+        event[15] = (2003, 18, struct.pack('<iii', 0, 3006, 0))
+        with self.assertRaises(tool.EventPatchError):
+            self.patch(event)
+
+    def test_every_map_with_the_template_is_listed(self):
+        self.assertEqual(tool.AMBUSH_EVENTS[self.HEMWICK], {12204000})
+        self.assertEqual(set(tool.AMBUSH_EVENTS),
+                         {self.HEMWICK, 'm24_01_00_00.emevd.dcx', 'm25_00_00_00.emevd.dcx',
+                          'm26_00_00_00.emevd.dcx', 'm29.emevd.dcx'})
+
+
+class LocalEventsKeepTheirParameters(unittest.TestCase):
+    """Kaniel 2026-10-12: after the Dream patch the messengers sold weapons whose badges nobody
+    had. Event 12101000 is started per slot with arguments (2000:0) that its parameter entries
+    copy into instructions by index; the inserted 2000:2 moved every instruction one down, so the
+    item check (3:4, instruction 4) took nothing and the shop lines opened."""
+
+    def test_the_parameters_follow_their_instructions(self):
+        lines = [(1003, 2, struct.pack('<BBBxi', 0, 1, 0, 0)),
+                 (3, 4, struct.pack('<BBxxiB', 0, 3, 0, 1)),
+                 (2004, 26, struct.pack('<ii', 0, 1))]
+        original = build_emevd({12101000: lines},
+                               {12101000: [(0, 4, 0, 4), (1, 4, 4, 4), (2, 0, 8, 4)]})
+        patched, count = tool.make_events_local(original, {12101000})
+        self.assertEqual(count, 1)
+        self.assertEqual(parameters_of(patched, 12101000),
+                         [(1, 4, 0, 4), (2, 4, 4, 4), (3, 0, 8, 4)])
+        self.assertEqual(tool.make_events_local(patched, {12101000}), (patched, 0))
+
+    def test_an_event_an_earlier_insert_moved_keeps_them_too(self):
+        # 2026-10-18: the Dream's altar warp (12107100) comes after the shop events; the insert
+        # before it moved its instructions, and its parameters were left behind.
+        first = [(1003, 2, struct.pack('<BBBxi', 0, 1, 0, 0))]
+        warp = [(1003, 6, struct.pack('<BBxx', 0, 1)), (3, 0, struct.pack('<BBxxi', 0, 1, 0))]
+        original = build_emevd({12101000: first, 12107100: warp}, {12107100: [(1, 4, 0, 4)]})
+        patched, count = tool.make_events_local(original, {12101000, 12107100})
+        self.assertEqual(count, 2)
+        self.assertEqual(parameters_of(patched, 12107100), [(2, 4, 0, 4)])
+
+
+def parameters_of(emevd: bytes, wanted: int) -> list[tuple[int, int, int, int]]:
+    fields = struct.unpack_from('<16q', emevd, 16)
+    for index in range(fields[0]):
+        event, _, _, count, offset, _, _ = struct.unpack_from('<qqqqqii', emevd,
+                                                              fields[1] + index * 48)
+        if event == wanted:
+            return [struct.unpack_from('<qqqi', emevd, fields[9] + offset + k * 32)[:4]
+                    for k in range(count)]
+    return []
+
+
+if __name__ == '__main__':
+    unittest.main()
+
+
+def doll_kneel_event() -> list[tuple[int, int, bytes]]:
+    """m21_00's 12100112, cut down: once 72100100 is on, the local player (10000) turns to the Doll
+    (2004:14) and kneels (2003:18), then 72100101 is set for her talk."""
+    return [
+        (2000, 2, struct.pack('<i', 0)),
+        flag_condition(0, 72100100),
+        (2004, 14, struct.pack('<iiii', 10000, 2100700, 101290, 0)),
+        (2004, 14, struct.pack('<iiii', 10000, 2100700, 101270, 0)),
+        (1001, 1, struct.pack('<i', 0)),
+        (2003, 2, struct.pack('<iBxxx', 72100101, 1)),
+        (2003, 18, struct.pack('<iii', 10000, 101272, 0)),
+        (2004, 14, struct.pack('<iiii', 2100700, 10000, 7021, 0)),  # the Doll's, not the player's
+        (2003, 2, struct.pack('<iBxxx', 72100101, 0)),
+    ]
+
+
+class OnlyTheLevellingPlayerKneels(unittest.TestCase):
+    """Kaniel 2026-11-01: when the host levels up in the Hunter's Dream, the guests take the same
+    pose. 72100100 (the Doll's blessing) reaches every player, and each game's 12100112 then plays
+    the kneel on its own player. The kneel's animations now run only while this player's own
+    level-up flag 6700 is on (her talk sets it as her level-up menu opens); the blessing's flags
+    still go on as before, so the levelling player's talk finishes."""
+
+    def setUp(self):
+        self.edits: list = []
+        self.original = build_emevd({12100112: doll_kneel_event(), 12100113: doll_kneel_event()})
+        self.patched, self.count = tool.guard_own_animations(self.original, {12100112: 6700},
+                                                             self.edits)
+        self.events = read_events(self.patched)
+
+    def test_each_of_the_players_animations_is_skipped_without_its_own_level_up(self):
+        skip = (1003, 1, struct.pack('<BBBxi', 1, 0, 0, 6700))
+        original = doll_kneel_event()
+        self.assertEqual(self.count, 3)
+        self.assertEqual(self.events[12100112], [
+            original[0], original[1], skip, original[2], skip, original[3], original[4],
+            original[5], skip, original[6], original[7], original[8]])
+
+    def test_other_events_stay(self):
+        self.assertEqual(self.events[12100113], doll_kneel_event())
+
+    def test_the_file_still_checks_out(self):
+        tool.validate(self.original, self.patched, self.edits, 'm21_00_00_00.emevd.dcx')
+
+    def test_patching_twice_changes_nothing(self):
+        again, count = tool.guard_own_animations(self.patched, {12100112: 6700})
+        self.assertEqual(count, 0)
+        self.assertEqual(again, self.patched)
+
+    def test_the_hunters_dream_is_patched(self):
+        self.assertEqual(tool.OWN_ANIMATION_EVENTS, {'m21_00_00_00.emevd.dcx': {12100112: 6700}})

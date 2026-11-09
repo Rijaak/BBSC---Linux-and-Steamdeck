@@ -1,0 +1,748 @@
+// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+// Checks the patch tables against the game itself: every patch's original bytes, and the calls
+// the comments name, in the 01.09 eboot. The game is not in the repository, so these run only
+// where BLOODBORNE_EBOOT names an eboot.bin (CUSA03173, 01.09); elsewhere they are skipped.
+
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+#include "core/bloodborne_host_rules.h"
+#include "core/bloodborne_party.h"
+
+using namespace Core::Bloodborne;
+
+namespace {
+
+template <typename T>
+T ReadAt(const std::vector<u8>& data, size_t at) {
+    T value{};
+    std::memcpy(&value, data.data() + at, sizeof(T));
+    return value;
+}
+
+// The executable segment of a fake-signed SELF: shadPS4 loads it at the image base, so the
+// patch offsets are offsets into it.
+std::vector<u8> TextSegment(const std::vector<u8>& self) {
+    constexpr u32 SelfMagic = 0x1D3D154F;
+    if (self.size() < 0x20 || ReadAt<u32>(self, 0) != SelfMagic) {
+        return {};
+    }
+    const u16 segments = ReadAt<u16>(self, 0x18);
+    const size_t elf = 0x20 + size_t{segments} * 0x20;
+    if (elf + 0x40 > self.size() || std::memcmp(self.data() + elf,
+                                                "\x7F"
+                                                "ELF",
+                                                4) != 0) {
+        return {};
+    }
+    const u64 phoff = ReadAt<u64>(self, elf + 0x20);
+    const u16 phnum = ReadAt<u16>(self, elf + 0x38);
+    for (u16 segment = 0; segment < segments; ++segment) {
+        const size_t entry = 0x20 + size_t{segment} * 0x20;
+        const u64 flags = ReadAt<u64>(self, entry);
+        const u64 offset = ReadAt<u64>(self, entry + 0x08);
+        const u64 size = ReadAt<u64>(self, entry + 0x10);
+        const u32 index = static_cast<u32>((flags >> 20) & 0xFFF);
+        const size_t header = elf + phoff + size_t{index} * 0x38;
+        if (index >= phnum || header + 0x38 > self.size()) {
+            continue;
+        }
+        constexpr u32 Loadable = 1;
+        constexpr u32 Executable = 1;
+        if (ReadAt<u32>(self, header) == Loadable && (ReadAt<u32>(self, header + 4) & Executable) &&
+            ReadAt<u64>(self, header + 0x10) == 0 && offset + size <= self.size()) {
+            return {self.begin() + offset, self.begin() + offset + size};
+        }
+    }
+    return {};
+}
+
+class BloodborneEboot : public ::testing::Test {
+protected:
+    static void SetUpTestSuite() {
+        const char* path = std::getenv("BLOODBORNE_EBOOT");
+        if (path == nullptr || *path == '\0') {
+            return;
+        }
+        std::ifstream file(path, std::ios::binary);
+        const std::vector<u8> self{std::istreambuf_iterator<char>{file}, {}};
+        text = new std::vector<u8>(TextSegment(self));
+    }
+    static void TearDownTestSuite() {
+        delete text;
+        text = nullptr;
+    }
+    void SetUp() override {
+        if (text == nullptr) {
+            GTEST_SKIP() << "BLOODBORNE_EBOOT does not name the game's eboot.bin";
+        }
+        ASSERT_FALSE(text->empty()) << "not a fake-signed SELF with a text segment";
+    }
+
+    static std::vector<u8> Bytes(u64 offset, size_t size) {
+        if (offset + size > text->size()) {
+            return {};
+        }
+        return {text->begin() + offset, text->begin() + offset + size};
+    }
+    static u64 CallTarget(u64 offset) {
+        return DecodeNearCallTarget(offset, Bytes(offset, 5));
+    }
+    static u64 JumpTarget(u64 offset) {
+        return DecodeNearJumpTarget(offset, Bytes(offset, 5));
+    }
+
+    static inline std::vector<u8>* text = nullptr;
+};
+
+constexpr u64 MultiPlayStopRequest = 0x01ED07A0; // CSMultiPlayMan StopRequest
+constexpr u64 LeaveSession = 0x015BED10;
+const std::vector<u8> FunctionPrologue{0x55, 0x48, 0x89, 0xE5}; // push rbp; mov rbp, rsp
+
+} // namespace
+
+TEST_F(BloodborneEboot, EveryPatchFindsTheGamesOwnBytes) {
+    const std::vector<std::pair<const char*, const std::vector<CodePatch>*>> tables{
+        {"ghost death", &GhostDeathKeepSessionPatches()},
+        {"guest bloodstain", &GuestBloodstainPatches()},
+        {"no echo theft", &NoEchoTheftPatches()},
+        {"host death", &HostDeathKeepGuestsPatches()},
+        {"boss clear", &BossClearKeepSessionPatches()},
+        {"join anywhere", &JoinAnywherePatches()},
+        {"quiet summon banners", &QuietSummonBannerPatches()},
+    };
+    for (const auto& [name, patches] : tables) {
+        for (const CodePatch& patch : *patches) {
+            EXPECT_EQ(Bytes(patch.offset, patch.original.size()), patch.original)
+                << name << " patch at " << std::hex << patch.offset;
+        }
+    }
+}
+
+// The co-op site table (bloodborne_patch_sites.h): every site holds its original bytes in the
+// game as it ships (the default game patches are checked by bbport/tests/test_coop_sites.py).
+TEST_F(BloodborneEboot, EveryCoopSiteHoldsItsOriginalBytes) {
+    for (const CoopSite& site : CoopSites) {
+        const auto original = HexBytes(site.original);
+        EXPECT_EQ(Bytes(site.offset, original.size()), original)
+            << site.feature << ": " << site.name << " at " << std::hex << site.offset;
+    }
+}
+
+// Player report 2026-10-23 (the compass's bloodstain a bit off): the record UpDateBloodMark
+// (0x013D2910) writes keeps where the stain lies at +0x00 and where the player died at +0x18
+// (BloodstainOfRecord), and the stain's marker is placed at the first.
+TEST_F(BloodborneEboot, TheBloodstainLiesAtTheRecordsFirstPlace) {
+    // In the player's own world: +0x00 = 0x01904660(player), `mov [rbx], rax; mov [rbx+8], edx`.
+    EXPECT_EQ(CallTarget(0x013D2982), 0x01904660u);
+    EXPECT_EQ(Bytes(0x013D2987, 6), (std::vector<u8>{0x48, 0x89, 0x03, 0x89, 0x53, 0x08}));
+    // ... which is [player +0x400] +0x30, the player's last safe ground.
+    EXPECT_EQ(Bytes(0x01904660, 16), HexBytes("48 8B 8F 00 04 00 00 48 85 C9 74 06 48 83 C1 30"));
+    // +0x18: the character's position now (its physics +0x1E0), where it died.
+    EXPECT_EQ(Bytes(0x013D2AEE, 20),
+              HexBytes("C5 F8 28 80 E0 01 00 00 C4 E3 79 17 43 20 02 C5 F9 D6 43 18"));
+    // The show (0x01868A50) copies the record's +0x00 into the stain's marker (+0x88).
+    EXPECT_EQ(Bytes(0x01868BAC, 16), HexBytes("48 8B 49 30 8B 51 08 89 50 08 48 8B 11 48 89 10"));
+}
+
+// The channel table drops a received packet by giving it a channel past 0x43: both receive paths
+// of 0x01790C20 test `cmp ..., 0x43` right after its hook and take the game's own drop branch
+// (`ja`), which frees the packet (reliable, 0x01790E31) or returns false (unreliable, 0x01790F2E).
+TEST_F(BloodborneEboot, TheChannelChecksJumpToTheGamesOwnDrop) {
+    EXPECT_EQ(Bytes(UnreliableChannelCheckOffset + UnreliableChannelCheck.size(), 6),
+              (std::vector<u8>{0x0F, 0x87, 0xAF, 0x02, 0x00, 0x00})); // ja 0x01790F2E
+    EXPECT_EQ(Bytes(ReliableChannelCheckOffset + ReliableChannelCheck.size(), 2),
+              (std::vector<u8>{0x77, 0x49})); // ja 0x01790E31
+    // The reliable check reads the channel the hook rewrites: movsxd rax, [rbx + 0x64].
+    EXPECT_EQ(Bytes(ReliableChannelCheckOffset, 4), (std::vector<u8>{0x48, 0x63, 0x43, 0x64}));
+    // The send's prologue, where the table answers "not sent" (0) for a dropped channel.
+    EXPECT_EQ(Bytes(PacketSendOffset, PacketSendPrologue.size()),
+              std::vector<u8>(PacketSendPrologue.begin(), PacketSendPrologue.end()));
+}
+
+// The joiner kick of a closing session tests SessionManager +0x118 (ReopensClosedSession):
+// cmp byte [r12 + 0x118], 0 at 0x01ED121E.
+TEST_F(BloodborneEboot, TheClosingSessionKickTestsTheFlagWeClear) {
+    EXPECT_EQ(Bytes(0x01ED121E, 9),
+              (std::vector<u8>{0x41, 0x80, 0xBC, 0x24, 0x18, 0x01, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(SessionClosingOffset, 0x118u);
+}
+
+TEST_F(BloodborneEboot, TheSignTimersAreTheGamesStores) {
+    for (const SignTimerSite& site : SignTimerSites) {
+        const auto expected = EncodeSignTimerStore(site.modrm, site.original_seconds);
+        EXPECT_EQ(Bytes(site.offset, expected.size()),
+                  std::vector<u8>(expected.begin(), expected.end()))
+            << "sign timer at " << std::hex << site.offset;
+    }
+}
+
+TEST_F(BloodborneEboot, TheNamedGameFunctionsStartThere) {
+    for (const u64 offset :
+         {EventFlagIsSetOffset, PartyGhostSetEventFlagOffset, PartyGhostCustomLuaCallStartOffset,
+          OnKeyTime2Offset, MultiPlayStopRequest, LeaveSession, KillCharacterOffset}) {
+        EXPECT_EQ(Bytes(offset, FunctionPrologue.size()), FunctionPrologue) << std::hex << offset;
+    }
+}
+
+// The rig's quit-title (Kaniel 2026-10-25): the System menu's Exit Game item (text 110004, its
+// action 0x01C0C9F0 at 0x01BB4349) asks "Quit?" with a callable whose Yes is 0x01C0D050
+// (QuitGameConfirmedOffset): lea rax, [rip + x] first, the title's request ([0x05562878] +0x250
+// = 1) last.
+TEST_F(BloodborneEboot, TheQuitIsTheExitGameItemsYes) {
+    EXPECT_EQ(Bytes(0x01BB431F, 5), (std::vector<u8>{0xBA, 0xB4, 0xAD, 0x01, 0x00})) << "110004";
+    s32 action = 0;
+    std::memcpy(&action, Bytes(0x01BB4349 + 3, 4).data(), 4);
+    EXPECT_EQ(0x01BB4350 + action, 0x01C0C9F0u);
+    EXPECT_EQ(Bytes(0x01C0D050, 3), (std::vector<u8>{0x48, 0x8D, 0x05}));
+    EXPECT_EQ(Bytes(0x01C0D0C4, 11),
+              (std::vector<u8>{0xC7, 0x80, 0x50, 0x02, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xC3}));
+}
+
+// Talk command 66 (an NPC's gesture, rig talk-gesture and the gesture flags' fix read the list the
+// same way): the dispatcher's case 66 (table 0x020442E0) goes to 0x02041691; its body takes the
+// local PlayerGameData ([GameDataMan] +8) +0x5B8, looks at its 30 slots from +0x10 and sets the
+// found one's bit 0. The gesture table (0x014EC980) has rows 0 to 30.
+TEST_F(BloodborneEboot, TalkCommand66SetsTheGestureSlotsBit) {
+    constexpr u64 Table = 0x020442E0;
+    s32 case66 = 0;
+    std::memcpy(&case66, Bytes(Table + 66 * 4, 4).data(), 4);
+    EXPECT_EQ(Table + case66, 0x02041691u);
+    EXPECT_EQ(Bytes(0x02040004, 3), (std::vector<u8>{0x83, 0xF8, 0x57})) << "88 commands";
+    s32 manager = 0;
+    std::memcpy(&manager, Bytes(0x02042AD1 + 3, 4).data(), 4);
+    EXPECT_EQ(Bytes(0x02042AD1, 3), (std::vector<u8>{0x48, 0x8D, 0x05})); // lea rax, [rip + x]
+    EXPECT_EQ(0x02042AD8 + manager, 0x0553B130) << "GameDataMan";
+    EXPECT_EQ(Bytes(0x02042ADB, 4), (std::vector<u8>{0x48, 0x8B, 0x40, 0x08})); // [rax + 8]
+    EXPECT_EQ(Bytes(0x02042AE8, 7),
+              (std::vector<u8>{0x4C, 0x8B, 0xA0, 0xB8, 0x05, 0x00, 0x00})); // [rax + 0x5B8]
+    EXPECT_EQ(Bytes(0x02042B01, 5),
+              (std::vector<u8>{0x41, 0x8B, 0x44, 0x9C, 0x10})); // [r12 + rbx * 4 + 0x10]
+    EXPECT_EQ(Bytes(0x02042B5C, 3), (std::vector<u8>{0x83, 0xFB, 0x1E})) << "30 slots";
+    EXPECT_EQ(Bytes(0x02043E9E, 6), (std::vector<u8>{0x41, 0x80, 0x4C, 0x9C, 0x10, 0x01}))
+        << "or byte [slot], 1";
+    EXPECT_EQ(Bytes(0x014ECE3B, 3), (std::vector<u8>{0x83, 0xFB, 0x1E})) << "rows 0 to 30";
+}
+
+// The duels' banners are the game's SetTextEffect (the event binding that queues the HUD's big
+// banners, ids 1 to 17): `lea eax, [rsi - 1]; cmp eax, 0x10`, and the Lua table registers it.
+TEST_F(BloodborneEboot, BannersAreQueuedBySetTextEffect) {
+    EXPECT_EQ(Bytes(SetTextEffectOffset, SetTextEffectStart.size()),
+              std::vector<u8>(SetTextEffectStart.begin(), SetTextEffectStart.end()));
+    // lea rax, [rip - 0xC745] at 0x013427EE: the binding's registration takes this function.
+    EXPECT_EQ(Bytes(0x013427EE, 3), (std::vector<u8>{0x48, 0x8D, 0x05}));
+    EXPECT_EQ(0x013427F5 + ReadAt<s32>(*text, 0x013427F1), SetTextEffectOffset);
+}
+
+// Banner id 17 (TE_Draw) plays TextEffect_Draw, the game's NIGHTMARE SLAIN (text 522007; the Wet
+// Nurse's kill queues it, m26_00 event 12601800): no banner is free for party death (player report
+// 2026-10-29). The text effect dialog plays slot id (`imul r13, r14, 0x58`, the slots from +0x298),
+// and its setup puts the movie named "TextEffect_Draw" (0x049343C6) in slot 17's +0x20.
+TEST_F(BloodborneEboot, BannerSeventeenIsTheNightmareSlainMovie) {
+    EXPECT_EQ(Bytes(0x01BF9968, 4), HexBytes("4D 6B EE 58")); // imul r13, r14, 0x58
+    EXPECT_EQ(Bytes(0x01BF996C, 8),
+              HexBytes("4F 8D A4 2F 98 02 00 00"));        // lea r12, [r15+r13+0x298]
+    EXPECT_EQ(Bytes(0x01BF651D, 3), HexBytes("48 8D 15")); // lea rdx, [rip + x]
+    EXPECT_EQ(0x01BF6524 + ReadAt<s32>(*text, 0x01BF6520), 0x049343C6u);
+    EXPECT_EQ(Bytes(0x01BF654E, 7), HexBytes("49 8D 87 90 08 00 00")); // lea rax, [r15 + 0x890]
+    EXPECT_EQ(0x298u + 17 * 0x58 + 0x20, 0x890u);
+}
+
+// Banner 15 is UNLOCKED: the setup puts the movie named "TextEffect_YouWin" in slot 15's +0x20
+// (the party HUD's YOU ARE DOWN is a copy of it of its own), and an id out of 1 to 17 queues
+// nothing.
+TEST_F(BloodborneEboot, BannerFifteenIsTheYouWinMovie) {
+    EXPECT_EQ(UnlockedTextEffect, 15);
+    EXPECT_EQ(Bytes(0x01BF628D, 3), HexBytes("48 8D 15"));
+    EXPECT_EQ(0x01BF6294 + ReadAt<s32>(*text, 0x01BF6290), 0x049343A1u);
+    EXPECT_EQ(Bytes(0x01BF62BE, 3), HexBytes("49 8D 87"));
+    EXPECT_EQ(ReadAt<u32>(*text, 0x01BF62C1), 0x298u + 15 * 0x58 + 0x20);
+    EXPECT_EQ(Bytes(SetTextEffectOffset + SetTextEffectStart.size(), 1), HexBytes("77")); // ja
+}
+
+// The role table's constructor names the co-operator role 7 (`mov dword [rax + 0x3A8], 107100`) and
+// clears role 6's texts (`vmovaps [rax + 0x320], xmm0`), and the nameplate reads the role's +0x28
+// from the table (`lea rcx, [rip + ...]; mov esi, [rcx + rax + 0x28]` at 0x01AE8643).
+TEST_F(BloodborneEboot, TheGuestRolesNameTextIsRole7s) {
+    EXPECT_EQ(Bytes(0x0187AB15, 10),
+              (std::vector<u8>{0xC7, 0x80, 0xA8, 0x03, 0x00, 0x00, 0x5C, 0xA2, 0x01, 0x00}));
+    EXPECT_EQ(GuestRole * RoleTableEntrySize + RoleNameTextAt, 0x3A8u);
+    EXPECT_EQ(Bytes(0x0187AA42, 8),
+              (std::vector<u8>{0xC5, 0xF8, 0x29, 0x80, 0x20, 0x03, 0x00, 0x00}));
+    EXPECT_EQ(UnnamedGuestRole * RoleTableEntrySize + 0x20, 0x320u);
+    EXPECT_EQ(Bytes(0x01AE8643, 3), (std::vector<u8>{0x48, 0x8D, 0x0D}));
+    EXPECT_EQ(0x01AE864A + ReadAt<s32>(*text, 0x01AE8646), RoleTableOffset);
+    EXPECT_EQ(Bytes(0x01AE864A, 4), (std::vector<u8>{0x8B, 0x74, 0x01, 0x28}));
+}
+
+// The party HUD's nameplate hook is the HUD tag update's one exit (`add rsp, 0xC8; pop rbx...`),
+// with the tag update's own start where the comment says (it keeps the tag in r14, data in r13).
+TEST_F(BloodborneEboot, TheNameplateHookIsTheTagUpdatesExit) {
+    EXPECT_EQ(Bytes(HudTagUpdateExitOffset, HudTagUpdateExit.size()),
+              std::vector<u8>(HudTagUpdateExit.begin(), HudTagUpdateExit.end()));
+    EXPECT_EQ(Bytes(HudTagUpdateExitOffset + HudTagUpdateExit.size(), 1), std::vector<u8>{0x5B});
+    // mov r13, rsi; mov r14, rdi in the update's prologue.
+    EXPECT_EQ(Bytes(0x01B59E34, 6), (std::vector<u8>{0x49, 0x89, 0xF5, 0x49, 0x89, 0xFE}));
+}
+
+// A hit's final damage is stored at the hit record's +0x22C (`mov [rcx+0x22C], eax`), before any
+// HP changes; the remote-player flag and the attacker are in the hit's frame.
+TEST_F(BloodborneEboot, TheReviveHitHookIsWhereTheHitsDamageIsStored) {
+    EXPECT_EQ(Bytes(HitDamageStoredOffset, HitDamageStored.size()),
+              std::vector<u8>(HitDamageStored.begin(), HitDamageStored.end()));
+    // The team setter (SetTeamType): mov [rax + 0x88], ebx.
+    EXPECT_EQ(Bytes(0x01334C73, 6), (std::vector<u8>{0x89, 0x98, 0x88, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(CharacterTeamOffset, 0x88u);
+}
+
+// The native party list: the HUD tick after its tags (`mov rdi, [r15 + 0xF8]`, r15 the HUD, the
+// frame time at [rbp - 0x6C8]) builds its tags as the HUD's own init does (child lookup, then the
+// tag constructor) and updates them with the tag update.
+TEST_F(BloodborneEboot, ThePartyListUsesTheHudsOwnTagCode) {
+    EXPECT_EQ(Bytes(HudTicksTagsDoneOffset, HudTicksTagsDone.size()),
+              std::vector<u8>(HudTicksTagsDone.begin(), HudTicksTagsDone.end()));
+    EXPECT_EQ(CallTarget(HudTicksTagsDoneOffset - 5), HudTagUpdateOffset)
+        << "the last tag's update";
+    // vmovss xmm0, [rbp - 0x6C8] right before it: the frame time.
+    EXPECT_EQ(Bytes(0x01BF8A43, 8),
+              (std::vector<u8>{0xC5, 0xFA, 0x10, 0x85, 0x38, 0xF9, 0xFF, 0xFF}));
+    EXPECT_EQ(CallTarget(0x01BF5261), HudChildLookupOffset) << "RemotePCTag%d";
+    EXPECT_EQ(CallTarget(0x01BF5270), HudTagConstructorOffset);
+    for (const u64 offset :
+         {HudChildLookupOffset, HudTagConstructorOffset, HudTagUpdateOffset, HudSetVisibleOffset}) {
+        EXPECT_EQ(Bytes(offset, FunctionPrologue.size()), FunctionPrologue) << std::hex << offset;
+    }
+    // The prompt: built as the HUD's init builds ActionButtonTop (0x1A8 bytes, its constructor),
+    // updated where the HUD tick updates it.
+    EXPECT_EQ(Bytes(0x01BF56C4, 5), (std::vector<u8>{0xBE, 0xA8, 0x01, 0x00, 0x00}));
+    EXPECT_EQ(CallTarget(0x01BF5711), HudPromptConstructorOffset);
+    EXPECT_EQ(CallTarget(0x01BF8A6B), HudPromptUpdateOffset);
+    // The tag's allocation: 0x6E0 bytes.
+    EXPECT_EQ(Bytes(0x01BF522D, 5), (std::vector<u8>{0xBE, 0xE0, 0x06, 0x00, 0x00}));
+    EXPECT_EQ(HudTagSize, 0x6E0u);
+}
+
+// A PathRef's value is released where the comments say: the game's HUD init releases its stack
+// PathRef after each tag ([rbp - 0x518]: type +0x48, interface +0x40, object +0x50, the value at
+// +0x30, the interface's slot 3), and the HUD movie's destructor releases every value still in
+// its list the same way (rig wipe3 2026-10-12: a dead one crashed at 0x0001E312).
+TEST_F(BloodborneEboot, HudValuesAreReleasedAsTheGameDoes) {
+    // test byte [rbp - 0x4D0], 0x40; je; mov rdi, [rbp - 0x4D8]; mov rdx, [rbp - 0x4C8];
+    // mov rax, [rdi]; lea rsi, [rbp - 0x4E8]; call [rax + 0x18]
+    EXPECT_EQ(
+        Bytes(0x01BF528B, 36),
+        (std::vector<u8>{0xF6, 0x85, 0x30, 0xFB, 0xFF, 0xFF, 0x40, 0x74, 0x26, 0x48, 0x8B, 0xBD,
+                         0x28, 0xFB, 0xFF, 0xFF, 0x48, 0x8B, 0x95, 0x38, 0xFB, 0xFF, 0xFF, 0x48,
+                         0x8B, 0x07, 0x48, 0x8D, 0xB5, 0x18, 0xFB, 0xFF, 0xFF, 0xFF, 0x50, 0x18}));
+    constexpr s32 PathRefAt = -0x518;
+    EXPECT_EQ(PathRefAt + static_cast<s32>(HudPathRefTypeAt), -0x4D0);
+    EXPECT_EQ(PathRefAt + static_cast<s32>(HudPathRefInterfaceAt), -0x4D8);
+    EXPECT_EQ(PathRefAt + static_cast<s32>(HudPathRefObjectAt), -0x4C8);
+    EXPECT_EQ(PathRefAt + static_cast<s32>(HudPathRefValueAt), -0x4E8);
+    EXPECT_EQ(HudValueLinkedBit, 0x40u);
+    // The movie's destructor, over its list's nodes (rbx, a value): test byte [rbx + 0x18], 0x40;
+    // je; mov rdi, [rbx + 0x10]; mov rdx, [rbx + 0x20]; mov rax, [rdi]; mov rsi, rbx;
+    // call [rax + 0x18].
+    EXPECT_EQ(
+        Bytes(0x0001E304, 23),
+        (std::vector<u8>{0xF6, 0x43, 0x18, 0x40, 0x74, 0xE6, 0x48, 0x8B, 0x7B, 0x10, 0x48, 0x8B,
+                         0x53, 0x20, 0x48, 0x8B, 0x07, 0x48, 0x89, 0xDE, 0xFF, 0x50, 0x18}));
+}
+
+// The play-animation's check that the character takes the request: its module path and flag.
+TEST_F(BloodborneEboot, TheKneelWaitsOnThePlayAnimationsOwnCheck) {
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset, AnimationRequestCheck.size()),
+              std::vector<u8>(AnimationRequestCheck.begin(), AnimationRequestCheck.end()));
+    // mov rax,[rax+0x58]; mov rcx,[rax+8]; mov rdx,[rcx+0x3B0]; mov rdx,[rdx+0x30]; test; je;
+    // cmp byte [rdx+0x384],0
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset + 7, 4), (std::vector<u8>{0x48, 0x8B, 0x40, 0x58}));
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset + 11, 4),
+              (std::vector<u8>{0x48, 0x8B, 0x48, 0x08}));
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset + 15, 7),
+              (std::vector<u8>{0x48, 0x8B, 0x91, 0xB0, 0x03, 0x00, 0x00}));
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset + 22, 4),
+              (std::vector<u8>{0x48, 0x8B, 0x52, 0x30}));
+    EXPECT_EQ(Bytes(AnimationRequestCheckOffset + 31, 7),
+              (std::vector<u8>{0x80, 0xBA, 0x84, 0x03, 0x00, 0x00, 0x00}));
+}
+
+// The HUD's lock-on cursor state in FeData: -1 (hidden) when nothing is locked on, 0 when the
+// lock-on mark is shown (`cmp cl, 1; sbb ecx, ecx; mov [rax + 0x14F8], ecx`), read by the tick.
+TEST_F(BloodborneEboot, TheLockOnCursorIsFeDatas) {
+    EXPECT_EQ(Bytes(0x01BFE559, 11),
+              (std::vector<u8>{0x80, 0xF9, 0x01, 0x19, 0xC9, 0x89, 0x88, 0xF8, 0x14, 0x00, 0x00}));
+    EXPECT_EQ(Bytes(0x01BFE59C, 10),
+              (std::vector<u8>{0xC7, 0x80, 0xF8, 0x14, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF}));
+    EXPECT_EQ(HudLockCursorAt, 0x14F8u);
+}
+
+// The HUD's constructor, at its only call, is the HUD the tick runs (rdi there, r15 in the tick).
+TEST_F(BloodborneEboot, TheHudConstructorHookIsTheHudsConstructor) {
+    EXPECT_EQ(Bytes(HudConstructOffset, HudConstructPrologue.size()),
+              std::vector<u8>(HudConstructPrologue.begin(), HudConstructPrologue.end()));
+    EXPECT_EQ(CallTarget(0x01F62B53), HudConstructOffset);
+}
+
+// The downed player's infinite poise: the hit's knockback and reaction dispatcher, called from the
+// hit at both its places.
+TEST_F(BloodborneEboot, TheHitReactionHookIsTheKnockbackDispatcher) {
+    EXPECT_EQ(Bytes(HitReactionOffset, HitReactionPrologue.size()),
+              std::vector<u8>(HitReactionPrologue.begin(), HitReactionPrologue.end()));
+    EXPECT_EQ(CallTarget(0x01A2CECB), HitReactionOffset);
+    EXPECT_EQ(CallTarget(0x01A2E236), HitReactionOffset);
+}
+
+// The calls the patches and hooks are about are where the comments say.
+TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
+    // Ghost death: SetEventFlag(4047) twice, then CustomLuaCallStart(4063).
+    EXPECT_EQ(CallTarget(0x01381FE7), PartyGhostSetEventFlagOffset);
+    EXPECT_EQ(CallTarget(0x01381FF6), PartyGhostSetEventFlagOffset);
+    EXPECT_EQ(CallTarget(0x0138201B), PartyGhostCustomLuaCallStartOffset);
+    // SoloBlockClear returns at 0x01385A4A, before its StopRequest and LeaveSession tail jump.
+    EXPECT_EQ(CallTarget(0x01385A95), MultiPlayStopRequest);
+    EXPECT_EQ(JumpTarget(0x01385AC6), LeaveSession);
+    EXPECT_LT(BossClearKeepSessionPatches().back().offset, 0x01385A95u);
+    // The world load's StopRequest returns to the address IsWorldReloadStopRequest knows, and its
+    // LeaveSession follows.
+    EXPECT_EQ(CallTarget(0x0193C657), MultiPlayStopRequest);
+    EXPECT_TRUE(IsWorldReloadStopRequest(0x0193C657 + 5));
+    EXPECT_EQ(CallTarget(0x0193C689), LeaveSession);
+    EXPECT_TRUE(IsWorldReloadLeaveSession(0x0193C689 + 5));
+    // The co-op area check: the flag read, then `xor al, 1`.
+    EXPECT_EQ(CallTarget(0x0191A8B5), EventFlagIsSetOffset);
+    EXPECT_EQ(Bytes(0x0191A8BA, 2), (std::vector<u8>{0x34, 0x01}));
+    // Event commands 2004:5 (Change Character Enable State) and 2004:29 (Set Character Backread
+    // State): the enable switch a guest uses on what the host's story removed, and the +0x28
+    // byte (`setne byte ptr [rax + 0x28]`) the shown board carries.
+    EXPECT_EQ(CallTarget(0x017BAA35), 0x018C6390u);
+    EXPECT_EQ(Bytes(0x018C6390, 8),
+              (std::vector<u8>{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56}));
+    EXPECT_EQ(Bytes(0x017BBCC4, 4), (std::vector<u8>{0x0F, 0x95, 0x40, 0x28}));
+    // Event command 2004:39 (the hits switch, see SetCharacterHitsOff): case 39 calls the entity
+    // hits switch, which for a character sets or clears bit 1 of [+0x58]+0x114
+    // (`mov rax, [rax + 0x58]; movzx ecx, word ptr [rax + 0x114]; mov edx, ecx; or edx, 2`).
+    EXPECT_EQ(CallTarget(0x017BC180), 0x013CABD0u);
+    EXPECT_EQ(Bytes(0x013CAD09, 16),
+              (std::vector<u8>{0x48, 0x8B, 0x40, 0x58, 0x0F, 0xB7, 0x88, 0x14, 0x01, 0x00, 0x00,
+                               0x89, 0xCA, 0x83, 0xCA, 0x02}));
+    // Event command 2005:3 (an object's enable switch, the rig's object census): case 3 calls
+    // the hits switch and the entity enable switch, which reads the object registry and sets bit
+    // 14 of the map object's +0x1FC (`mov eax, [rdi + 0x1FC]; mov ecx, eax; and ecx, 0x4000`).
+    EXPECT_EQ(CallTarget(0x017C485F), 0x013CABD0u);
+    EXPECT_EQ(CallTarget(0x017C4869), 0x013CA580u);
+    // `lea rax, [rip + 0x04170BCB]`: the registry pointer at 0x0553B168.
+    EXPECT_EQ(Bytes(0x013CA596, 7), (std::vector<u8>{0x48, 0x8D, 0x05, 0xCB, 0x0B, 0x17, 0x04}));
+    EXPECT_EQ(CallTarget(0x013CA696), 0x015A6CA0u);
+    EXPECT_EQ(Bytes(0x015A6CA0 + 7, 14),
+              (std::vector<u8>{0x8B, 0x87, 0xFC, 0x01, 0x00, 0x00, 0x89, 0xC1, 0x81, 0xE1, 0x00,
+                               0x40, 0x00, 0x00}));
+    // The kill autoplay uses: the dead flag (`or byte ptr [r15 + 0x1E3], 1`) on its way out.
+    EXPECT_EQ(Bytes(0x018BFAD3, 8),
+              (std::vector<u8>{0x41, 0x80, 0x8F, 0xE3, 0x01, 0x00, 0x00, 0x01}));
+    // The network banner both chime calls go to (it takes the message id the summon picked).
+    EXPECT_EQ(Bytes(ShowNetworkBannerOffset, FunctionPrologue.size()), FunctionPrologue);
+    for (const CodePatch& patch : QuietSummonBannerPatches()) {
+        EXPECT_EQ(CallTarget(patch.offset), ShowNetworkBannerOffset) << std::hex << patch.offset;
+    }
+    // Host death: the jump lands on the epilogue it names.
+    const CodePatch& host_dead = HostDeathKeepGuestsPatches().front();
+    EXPECT_EQ(DecodeNearJumpTarget(host_dead.offset, host_dead.patched), HostDeadEpilogueOffset);
+}
+
+// The give (GiveItems, 0x017D89F0) queues each item it put in the inventory and each it sent to
+// the storage on the item-received popup's queue, the hook silent grants skip.
+TEST_F(BloodborneEboot, TheGiveQueuesItsPopupsAtTheHookedPush) {
+    EXPECT_EQ(CallTarget(0x017D9348), ItemGetQueuedOffset);
+    EXPECT_EQ(CallTarget(0x017D94C7), ItemGetQueuedOffset);
+    EXPECT_EQ(Bytes(ItemGetQueuedOffset, ItemGetQueuedPrologue.size()),
+              std::vector<u8>(ItemGetQueuedPrologue.begin(), ItemGetQueuedPrologue.end()));
+}
+
+// Boss tempo (Kaniel 2026-10-28): the AI scripts' AddSubGoal (each overload the Lua binding
+// registers under that name at 0x0127FBD4) calls 0x0124CC60, whose prologue keeps the goal's
+// life time at [rbp - 0xBC] just before the hooked instructions (goal in rdi, its id in esi).
+TEST_F(BloodborneEboot, TheBossTempoHookIsAddSubGoalAfterItsPrologue) {
+    EXPECT_EQ(CallTarget(0x0127EC97), AddSubGoalOffset);
+    EXPECT_EQ(CallTarget(0x0127ED13), AddSubGoalOffset);
+    EXPECT_EQ(Bytes(AddSubGoalOffset, FunctionPrologue.size()), FunctionPrologue);
+    EXPECT_EQ(Bytes(AddSubGoalLifeHookOffset - 8, 8),
+              (std::vector<u8>{0xC5, 0xFA, 0x11, 0x85, 0x44, 0xFF, 0xFF, 0xFF}));
+    static_assert(AddSubGoalLifeFrameOffset == -0xBC);
+    EXPECT_EQ(Bytes(AddSubGoalLifeHookOffset, AddSubGoalLifeHook.size()),
+              std::vector<u8>(AddSubGoalLifeHook.begin(), AddSubGoalLifeHook.end()));
+    // AddSubGoal_Front: its Lua wrapper calls it, its prologue keeps the life at [rbp - 0xB8].
+    EXPECT_EQ(CallTarget(0x0127F25B), AddSubGoalFrontOffset);
+    EXPECT_EQ(Bytes(AddSubGoalFrontOffset, FunctionPrologue.size()), FunctionPrologue);
+    EXPECT_EQ(Bytes(AddSubGoalFrontLifeHookOffset - 8, 8),
+              (std::vector<u8>{0xC5, 0xFA, 0x11, 0x85, 0x48, 0xFF, 0xFF, 0xFF}));
+    static_assert(AddSubGoalFrontLifeFrameOffset == -0xB8);
+    EXPECT_EQ(Bytes(AddSubGoalFrontLifeHookOffset, AddSubGoalLifeHook.size()),
+              std::vector<u8>(AddSubGoalLifeHook.begin(), AddSubGoalLifeHook.end()));
+    // The AI's character: `mov rdi, [rbx]; mov rax, [rdi]; call [rax + 0x30];
+    // mov [rbx + 0x558], rax` (its manipulator's character).
+    static_assert(AiCharacterOffset == 0x558);
+    EXPECT_EQ(Bytes(AiTakesItsCharacterOffset, 16),
+              (std::vector<u8>{0x48, 0x8B, 0x3B, 0x48, 0x8B, 0x07, 0xFF, 0x50, 0x30, 0x48, 0x89,
+                               0x83, 0x58, 0x05, 0x00, 0x00}));
+}
+
+// Team pings (Kaniel 2026-10-24): the item popup's push plays its sound (300) with the system
+// sound function, which the pings play their tick with; the HUD's feed writes the lock cursor's
+// spot where the pings read it.
+TEST_F(BloodborneEboot, ThePingsSoundAndLockCursorAreTheGamesOwn) {
+    EXPECT_EQ(CallTarget(0x016D8981), SystemSoundOffset);
+    EXPECT_EQ(Bytes(0x016D897C, 5),
+              (std::vector<u8>{0xBE, 0x2C, 0x01, 0x00, 0x00})); // mov esi, 300
+    EXPECT_EQ(SystemSoundItemGot, 300);
+    // mov rdi, [rip + ...]: the sound's object from the pointer the pings read.
+    const std::vector<u8> load = Bytes(0x016D8975, 7);
+    ASSERT_EQ(load.size(), 7u);
+    EXPECT_EQ((std::vector<u8>{load[0], load[1], load[2]}), (std::vector<u8>{0x48, 0x8B, 0x3D}));
+    s32 displacement = 0;
+    std::memcpy(&displacement, load.data() + 3, 4);
+    EXPECT_EQ(0x016D897C + displacement, s64(SystemSoundPointerOffset));
+    EXPECT_EQ(Bytes(SystemSoundOffset, SystemSoundPrologue.size()),
+              std::vector<u8>(SystemSoundPrologue.begin(), SystemSoundPrologue.end()));
+    // The cursor's tick: a selection that moved plays sound 0 (xor esi, esi; call).
+    EXPECT_EQ(CallTarget(0x015CA596), SystemSoundOffset);
+    EXPECT_EQ(Bytes(0x015CA594, 2), (std::vector<u8>{0x31, 0xF6}));
+    EXPECT_EQ(Bytes(HudLockCursorXWrite, HudLockCursorXStore.size()),
+              std::vector<u8>(HudLockCursorXStore.begin(), HudLockCursorXStore.end()));
+    EXPECT_EQ(Bytes(HudLockCursorYWrite, HudLockCursorYStore.size()),
+              std::vector<u8>(HudLockCursorYStore.begin(), HudLockCursorYStore.end()));
+}
+
+// The boss-death tracer's sites are the game's dead-flag writes; the two deaths go straight on
+// to the death step.
+TEST_F(BloodborneEboot, TheDeathSitesSetTheDeadFlag) {
+    for (const DeathFlagSite& site : DeathFlagSites()) {
+        EXPECT_EQ(Bytes(site.offset, site.instruction.size()), site.instruction)
+            << std::hex << site.offset;
+    }
+    EXPECT_EQ(CallTarget(0x018BF94B), DeathStepOffset);
+    EXPECT_EQ(CallTarget(0x018CE6CF), DeathStepOffset);
+    EXPECT_EQ(Bytes(DeathStepOffset, FunctionPrologue.size()), FunctionPrologue);
+}
+
+// Party death: every IsNoDead caller in the table returns from a call to it, and the hook at its
+// exit finds the bytes it copies.
+TEST_F(BloodborneEboot, TheNoDeadCallersCallIsNoDead) {
+    EXPECT_EQ(Bytes(IsNoDeadOffset, FunctionPrologue.size()), FunctionPrologue);
+    EXPECT_EQ(Bytes(IsNoDeadExitOffset, IsNoDeadExit.size()),
+              std::vector<u8>(IsNoDeadExit.begin(), IsNoDeadExit.end()));
+    for (const NoDeadCaller& caller : NoDeadCallers()) {
+        EXPECT_EQ(CallTarget(caller.return_offset - 5), IsNoDeadOffset)
+            << std::hex << caller.return_offset;
+    }
+}
+
+// A downed player is in no event's area: event condition 3:2 (the condition bank 3 handler
+// 0x017BD1D0, case 2, makes an evaluator whose update 0x017B6FE0 asks EntityInArea with its entity
+// and area) and the hook finds the function's prologue.
+TEST_F(BloodborneEboot, TheAreaConditionAsksEntityInArea) {
+    EXPECT_EQ(CallTarget(0x017B7023), EntityInAreaOffset);
+    EXPECT_EQ(Bytes(EntityInAreaOffset, EntityInAreaStart.size()),
+              std::vector<u8>(EntityInAreaStart.begin(), EntityInAreaStart.end()));
+}
+
+// Shared enemy damage counts this player's own hits at the game's hit function: its entry, and the
+// return from the IsNoDead check that follows the applied hit (the AfterHit caller).
+TEST_F(BloodborneEboot, TheHitHooksFindTheGamesHit) {
+    EXPECT_EQ(Bytes(HitOffset, HitPrologue.size()),
+              std::vector<u8>(HitPrologue.begin(), HitPrologue.end()));
+    EXPECT_EQ(Bytes(HitAppliedOffset, HitApplied.size()),
+              std::vector<u8>(HitApplied.begin(), HitApplied.end()));
+    EXPECT_EQ(CallTarget(HitAppliedOffset - 5), IsNoDeadOffset);
+    EXPECT_EQ(ClassifyNoDeadCheck(HitAppliedOffset), NoDeadCheck::AfterHit);
+    EXPECT_EQ(CallTarget(0x01A2A6B5), HitOffset) << "the damage module's hit calls it";
+    // Status effect HP changes: each site sets up the SetHp call that follows it.
+    for (const u64 offset : EffectHpChangeOffsets) {
+        EXPECT_EQ(Bytes(offset, EffectHpChange.size()),
+                  std::vector<u8>(EffectHpChange.begin(), EffectHpChange.end()))
+            << std::hex << offset;
+        EXPECT_EQ(CallTarget(offset + EffectHpChange.size() + 4), SetHpOffset)
+            << std::hex << offset;
+    }
+    EXPECT_EQ(CallTarget(0x01A2BFA3), SetHpOffset) << "the hit sets HP the same way";
+}
+
+// A member's character data (see MemberDataWait): the game's send and receive, its own one-byte
+// request on channel 0x0A, the answer to it, the after-load broadcast, and the pending check that
+// wants all five bits of the slot's byte.
+TEST_F(BloodborneEboot, TheMemberDataRequestIsTheGamesOwn) {
+    for (const u64 offset : {NetSyncSendOffset, NetSyncReceiveOffset, BroadcastMemberDataOffset}) {
+        EXPECT_EQ(Bytes(offset, FunctionPrologue.size()), FunctionPrologue) << std::hex << offset;
+    }
+    const std::vector<u8> request_channel{0xBA, MemberDataRequestChannel, 0x00, 0x00, 0x00};
+    // The game's request helper: mov edx, 0xA; mov r8d, 1; ... call send.
+    EXPECT_EQ(Bytes(0x01781A99, 5), request_channel);
+    EXPECT_EQ(CallTarget(0x01781AA4), NetSyncSendOffset);
+    // The answer: the request is received at 0x01783EEB, the parts go out after it.
+    EXPECT_EQ(Bytes(0x01783EDA, 5), request_channel);
+    EXPECT_EQ(CallTarget(0x01783EEB), NetSyncReceiveOffset);
+    EXPECT_EQ(CallTarget(0x017849C4), NetSyncSendOffset) << "the gear (channel 0x0C)";
+    // The broadcast after a load.
+    EXPECT_EQ(CallTarget(0x0193A979), BroadcastMemberDataOffset);
+    // cmp byte ptr [rcx + rax], 0x1F: a pending member is done when its slot's byte is full.
+    EXPECT_EQ(Bytes(0x0178B578, 4), (std::vector<u8>{0x80, 0x3C, 0x01, 0x1F}));
+    EXPECT_EQ(MemberDataParts | 0x01, 0x1F);
+}
+
+namespace {
+// Target of a `lea reg, [rip + disp32]` (REX.W, or REX.WR for r8-r15) at `offset`, or 0.
+u64 LeaTarget(const std::vector<u8>& bytes, u64 offset) {
+    if (bytes.size() < 7 || (bytes[0] != 0x48 && bytes[0] != 0x4C) || bytes[1] != 0x8D ||
+        (bytes[2] & 0xC7) != 0x05) {
+        return 0;
+    }
+    s32 displacement{};
+    std::memcpy(&displacement, bytes.data() + 3, sizeof(displacement));
+    return offset + 7 + static_cast<s64>(displacement);
+}
+} // namespace
+
+// The vtables the co-op code checks objects against (see IsGameVtable) are what the classes'
+// constructors store: `lea rax, [rip + vtable]`, then `mov [object], rax`.
+TEST_F(BloodborneEboot, TheCheckedVtablesAreWhatTheConstructorsStore) {
+    const auto lea = [](u64 offset) { return LeaTarget(Bytes(offset, 7), offset); };
+    // Characters: one constructor each.
+    EXPECT_EQ(lea(0x018B9B03), CharacterVtables[0]);
+    EXPECT_EQ(lea(0x018E48C9), CharacterVtables[1]);
+    EXPECT_EQ(lea(0x018F176C), CharacterVtables[2]);
+    EXPECT_EQ(lea(0x01908094), CharacterVtables[3]);
+    // The own bloodstain: 0x01467A70 builds it (0x018675B0), puts it at [[SprjEventMan] +0x80]
+    // +8 and shows it with the function ShowGuestBloodstain calls.
+    EXPECT_EQ(CallTarget(0x01467AE0), 0x018675B0u);
+    EXPECT_EQ(lea(0x018675D2), BloodstainVtable);
+    EXPECT_EQ(Bytes(0x01467B05, 4), (std::vector<u8>{0x48, 0x89, 0x78, 0x08}));
+    EXPECT_EQ(JumpTarget(0x01467B19), 0x01868A50u);
+    // EventFlagMan: built by 0x013B5910 into [0x0553B100]; its flag store part (0x013CF0E0, the
+    // object itself) stores the vtable, and the flag read (0x013CFD80) takes that object.
+    EXPECT_EQ(lea(0x0156C879), 0x0553B100u);
+    EXPECT_EQ(CallTarget(0x0156C8A6), 0x013B5910u);
+    EXPECT_EQ(CallTarget(0x013B5946), 0x013CF0E0u);
+    EXPECT_EQ(lea(0x013CF104), EventFlagManVtable);
+    // MapItemMan: built by 0x017D2960 into [0x0553D6E0].
+    EXPECT_EQ(lea(0x01929318), 0x0553D6E0u);
+    EXPECT_EQ(CallTarget(0x0192934C), 0x017D2960u);
+    EXPECT_EQ(lea(0x017D2983), MapItemManVtable);
+}
+
+// PlaceCharacter does what the game does when it puts the player at its lamp on a load: right
+// after the teleport (`call [rax + 0x5F8]`) the position snap and the follow reset. The CamReset
+// script binding (0x0132F5A0) calls the same two.
+TEST_F(BloodborneEboot, PlacementCallsWhatTheGamesLampPlacementCalls) {
+    EXPECT_EQ(Bytes(0x0154B2F2, 6), (std::vector<u8>{0xFF, 0x90, 0xF8, 0x05, 0x00, 0x00}));
+    EXPECT_EQ(CallTarget(0x0154B32A), SnapCharacterPositionOffset);
+    EXPECT_EQ(CallTarget(0x0154B3BD), ResetCharacterFollowOffset);
+    EXPECT_EQ(CallTarget(0x0132F605), SnapCharacterPositionOffset);
+    EXPECT_EQ(CallTarget(0x0132F612), ResetCharacterFollowOffset);
+    EXPECT_EQ(Bytes(SnapCharacterPositionOffset, 4), FunctionPrologue);
+    EXPECT_EQ(Bytes(ResetCharacterFollowOffset, 4), FunctionPrologue);
+}
+
+// An enemy's senses take a character as a target through 0x012B2960 (AddEnemyTargetOffset):
+// sight with (targeting + 0x10, 0, character, 0, [targeting + 8]); its type 0 target is built by
+// 0x012A7260, which sets kind 1 (`mov dword [rbx + 8], 1`) and the handle (+0x30 of the target).
+TEST_F(BloodborneEboot, AnEnemyTakesATargetTheWayItsSensesDo) {
+    EXPECT_EQ(CallTarget(0x012AEA2E), AddEnemyTargetOffset);
+    EXPECT_EQ(CallTarget(0x012ABDB0), AddEnemyTargetOffset);
+    EXPECT_EQ(Bytes(0x012AEA23, 4), (std::vector<u8>{0x48, 0x83, 0xC3, 0x10})); // rbx + 0x10
+    EXPECT_EQ(Bytes(0x012AEA29, 2), (std::vector<u8>{0x31, 0xC9}));             // type 0
+    EXPECT_EQ(CallTarget(0x012B2C2E), CharacterTargetInitOffset);
+    EXPECT_EQ(Bytes(0x012A737C, 7), (std::vector<u8>{0xC7, 0x43, 0x08, 0x01, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(Bytes(AddEnemyTargetOffset, 4), FunctionPrologue);
+    EXPECT_EQ(Bytes(CharacterTargetInitOffset, 4), FunctionPrologue);
+}
+
+// The camera manager: the in-game step builds it (0x01435FC0) and keeps it in [[0x0553E860]
+// +0x2830] (`lea rcx, [rip + ..]; mov rcx, [rcx]; mov [rcx + 0x2830], rax`); a map's start sets
+// its snap byte (`mov byte [rdi + 0x80], 1`) and its update hands it to the cameras.
+TEST_F(BloodborneEboot, TheCameraSnapIsWhereTheGameKeepsIt) {
+    EXPECT_EQ(CallTarget(0x019379D9), 0x01435FC0u);
+    EXPECT_EQ(LeaTarget(Bytes(0x019379F8, 7), 0x019379F8), CameraManagerPointerOffset);
+    EXPECT_EQ(Bytes(0x01937A02, 7), (std::vector<u8>{0x48, 0x89, 0x81, 0x30, 0x28, 0x00, 0x00}));
+    EXPECT_EQ(ReadAt<u32>(Bytes(0x01937A05, 4), 0), CameraManagerField);
+    EXPECT_EQ(Bytes(0x01939C0E, 7), (std::vector<u8>{0xC6, 0x87, 0x80, 0x00, 0x00, 0x00, 0x01}));
+    EXPECT_EQ(Bytes(0x01436964, 7), (std::vector<u8>{0x80, 0xBB, 0x80, 0x00, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(CameraSnapByte, 0x80u);
+}
+
+// The summon manager's update (0x01872360) ages each summon in flight (`vaddss xmm0, xmm0,
+// [r12 + 4]` with the frame time at 0x0187291C) and lets it go once it is 55 s old, or 180 s
+// old (the two `vucomiss xmm0, [rip + disp32]`); the party's patch points both at a 15.0 among
+// the game's constants.
+TEST_F(BloodborneEboot, TheSummonSlotHoldsReadTheGamesTimes) {
+    const auto float_at = [](u64 offset) {
+        const auto bytes = Bytes(offset, sizeof(float));
+        float value = 0.0f;
+        if (bytes.size() == sizeof(float)) {
+            std::memcpy(&value, bytes.data(), sizeof(value));
+        }
+        return value;
+    };
+    EXPECT_EQ(Bytes(0x0187291C, 7), (std::vector<u8>{0xC4, 0xC1, 0x7A, 0x58, 0x44, 0x24, 0x04}));
+    std::vector<float> holds;
+    for (const CoopSite& site : CoopSites) {
+        if (site.feature != "summon slot hold") {
+            continue;
+        }
+        const auto bytes = Bytes(site.offset, 8);
+        ASSERT_EQ(bytes.size(), 8u);
+        EXPECT_EQ(std::vector<u8>(bytes.begin(), bytes.begin() + 4),
+                  (std::vector<u8>{0xC5, 0xF8, 0x2E, 0x05}))
+            << site.name;
+        s32 displacement{};
+        std::memcpy(&displacement, bytes.data() + 4, sizeof(displacement));
+        holds.push_back(float_at(site.offset + 8 + static_cast<s64>(displacement)));
+    }
+    EXPECT_EQ(holds, (std::vector<float>{55.0f, 180.0f}));
+    EXPECT_EQ(float_at(PartySummonSlotHoldConstant), PartySummonSlotHoldSeconds);
+}
+
+// Phase 7 (feature "server owns leaves"): each patched branch jumps where the game's own branch
+// went when it stays in the session, past a block that ends it (its MultiPlayStopRequest call).
+TEST_F(BloodborneEboot, TheGamesOwnLeavesAreSkippedForItsStayPath) {
+    const auto branch_target = [](u64 offset, const std::vector<u8>& bytes) -> u64 {
+        if (bytes.size() >= 2 && (bytes[0] == 0xEB || (bytes[0] >= 0x70 && bytes[0] <= 0x7F))) {
+            return offset + 2 + static_cast<s8>(bytes[1]);
+        }
+        s32 rel = 0;
+        if (bytes.size() >= 6 && bytes[0] == 0x0F && (bytes[1] & 0xF0) == 0x80) {
+            std::memcpy(&rel, bytes.data() + 2, 4);
+            return offset + 6 + rel;
+        }
+        if (bytes.size() >= 5 && bytes[0] == 0xE9) {
+            std::memcpy(&rel, bytes.data() + 1, 4);
+            return offset + 5 + rel;
+        }
+        return 0;
+    };
+    const std::vector<std::pair<std::string_view, u64>> leaves{
+        {"session idle timeout", 0x01789CB4},
+        {"session resend overflow", 0x0178980D},
+        {"room timeout", 0x01789F99},
+    };
+    for (const auto& [name, stop_call] : leaves) {
+        const auto site = std::ranges::find(CoopSites, name, &CoopSite::name);
+        ASSERT_NE(site, CoopSites.end()) << name;
+        const u64 jump = branch_target(site->offset, HexBytes(site->patched));
+        EXPECT_EQ(CallTarget(stop_call), MultiPlayStopRequest) << name;
+        EXPECT_GT(stop_call, site->offset) << name;
+        EXPECT_GT(jump, stop_call) << name; // the block that stops is jumped over
+        if (name != "irregular leave event") {
+            EXPECT_EQ(jump, branch_target(site->offset, HexBytes(site->original))) << name;
+        } else {
+            // NetSync's reason callback returns there: pop rbx; pop r14; pop rbp; ret.
+            EXPECT_EQ(Bytes(jump, 5), (std::vector<u8>{0x5B, 0x41, 0x5E, 0x5D, 0xC3}));
+        }
+    }
+}

@@ -1,0 +1,778 @@
+from paths import ROOT
+import os
+import struct
+import tempfile
+import unittest
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import patches
+
+from patches import (EBOOT_BASE, OUTPUT_SIZE, RESOLUTION_TEMPLATE, SCENE_HEIGHT,
+                     SCENE_WIDTH, UI_HEIGHT, UI_WIDTH, compile_patches,
+                     render_size, resolution_writes, scaled_sizes, effect_patches,
+                     validate_patch_requirements, external_patches, external_selection,
+                     compile_external)
+
+XML = ROOT / 'patches/Bloodborne.xml'
+SEGMENTS = [(0, 0x6000000)]
+
+
+def immediate(writes, address):
+    # The XML splits a 9-byte MOV imm32 + NOP into 4+4+1 byte writes.
+    data = bytearray(9)
+    for offset, value in writes:
+        if address <= offset < address + 9:
+            data[offset-address:offset-address+len(value)] = value
+    assert data[5:] == b'\x0f\x1f\x40\x00'
+    return data[0], struct.unpack_from('<I', data, 1)[0]
+
+
+class NativeUiTests(unittest.TestCase):
+    def test_presets_keep_ui_native(self):
+        for preset, expected in [(1, (1280, 720)), (2, (1130, 636)),
+                                 (3, (960, 540)), (4, (640, 360))]:
+            with self.subTest(preset=preset):
+                size = render_size({'upscaler': 'fsr3', 'preset': str(preset)})
+                self.assertEqual(size, expected)
+                writes = resolution_writes(XML, size, '01.09', SEGMENTS)
+                self.assertEqual(immediate(writes, SCENE_WIDTH), (0xB8, size[0]))
+                self.assertEqual(immediate(writes, SCENE_HEIGHT), (0xB8, size[1]))
+                self.assertEqual(immediate(writes, UI_WIDTH), (0xB8, OUTPUT_SIZE[0]))
+                self.assertEqual(immediate(writes, UI_HEIGHT), (0xB9, OUTPUT_SIZE[1]))
+
+    def test_explicit_scene_resolution_keeps_native_ui(self):
+        writes = resolution_writes(XML, (800, 450), '01.09', SEGMENTS)
+        self.assertEqual(immediate(writes, SCENE_WIDTH)[1], 800)
+        self.assertEqual(immediate(writes, UI_WIDTH)[1], 1920)
+        self.assertEqual(immediate(writes, UI_HEIGHT)[1], 1080)
+
+    def test_coordinate_and_aspect_fixes_are_preserved(self):
+        original = compile_patches(XML, [RESOLUTION_TEMPLATE], '01.09', SEGMENTS)
+        modified = resolution_writes(XML, (960, 540), '01.09', SEGMENTS)
+        self.assertEqual(len(original), len(modified))
+        changed = {SCENE_WIDTH, SCENE_HEIGHT, UI_WIDTH, UI_HEIGHT}
+        self.assertEqual([w for w in original if w[0] not in changed],
+                         [w for w in modified if w[0] not in changed])
+
+    def test_unexpected_or_missing_ui_instruction_is_rejected(self):
+        for remove in (False, True):
+            tree = ET.parse(XML)
+            for meta in tree.getroot().iter('Metadata'):
+                if meta.get('Name') == RESOLUTION_TEMPLATE and meta.get('AppVer') == '01.09':
+                    patch_list = meta.find('PatchList')
+                    for line in list(patch_list):
+                        if int(line.get('Address'), 0) == UI_WIDTH + EBOOT_BASE:
+                            if remove:
+                                patch_list.remove(line)
+                            else:
+                                line.set('Value', '0x000500B9')
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'patch.xml'
+                tree.write(path)
+                with self.assertRaises(ValueError):
+                    resolution_writes(path, (960, 540), '01.09', SEGMENTS)
+
+    def test_native_and_disabled_upscaler_need_no_resolution_patch(self):
+        self.assertIsNone(render_size({'preset': '0'}))
+        self.assertIsNone(render_size({'upscaler': 'off', 'preset': '3'}))
+
+    def test_output_other_than_1080p_scales_the_scene(self):
+        self.assertIsNone(scaled_sizes({'output_res': '1920x1080', 'preset': '2'}))
+        # Steam Deck: below 1080p the scene is still the preset's fraction of the output.
+        for preset, expected in [(0, (1280, 720)), (2, (752, 424)), (4, (426, 240))]:
+            with self.subTest(preset=preset):
+                self.assertEqual(scaled_sizes({'output_res': '1280x720', 'preset': str(preset)}),
+                                 (expected, (1280, 720)))
+        self.assertEqual(scaled_sizes({'output_res': '3840x2160', 'preset': '3'}),
+                         ((1916, 1078), (3840, 2160)))
+        # TAA is native-only and uses the live host targets.
+        self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))
+
+    def test_any_display_size_and_the_16x9_aspect_ratio(self):
+        # Kaniel 2026-10-24: ultrawide and other shapes; the scene keeps the output's shape.
+        self.assertEqual(scaled_sizes({'output_res': '2560x1080', 'preset': '0'}), ((2560, 1080), (2560, 1080)))
+        self.assertEqual(scaled_sizes({'output_res': '2560x1080', 'preset': '3'}), ((1280, 540), (2560, 1080)))
+        self.assertEqual(scaled_sizes({'output_res': '5120x1440', 'preset': '1'}), ((3414, 960), (5120, 1440)))
+        self.assertEqual(scaled_sizes({'output_res': '1600x1200', 'preset': '0'}), ((1600, 1200), (1600, 1200)))
+        # 16:9: the game's picture with bars; 2560x1080 is then the game's own 1920x1080.
+        self.assertIsNone(scaled_sizes({'output_res': '2560x1080', 'aspect_ratio': '16:9', 'preset': '3'}))
+        self.assertEqual(scaled_sizes({'output_res': '3440x1440', 'aspect_ratio': '16:9', 'preset': '0'}),
+                         ((2560, 1440), (2560, 1440)))
+        self.assertEqual(scaled_sizes({'output_res': '1920x1200', 'aspect_ratio': '16:9', 'preset': '0'}), None)
+        self.assertEqual(scaled_sizes({'output_res': '2560x1080', 'aspect_ratio': 'auto', 'preset': '0'}),
+                         ((2560, 1080), (2560, 1080)))
+
+
+class StartupOutputTests(unittest.TestCase):
+    """The startup patch's output is the game's (BbSettings::ResolveOutput): borderless refits the chosen
+    size to the desktop's shape, an unset one is 1080 lines in that shape, and a bbport.ini of the old
+    launcher (one of its four 16:9 sizes, no aspect_ratio key) on a desktop of another shape counts as
+    not chosen (Kaniel 2026-10-26: players on 21:9 kept 1920x1080 and their scene was not patched)."""
+
+    def sizes(self, settings, desktop, mode=None):
+        return scaled_sizes({'preset': '0', **settings}, desktop=desktop, window_mode=mode)
+
+    def test_borderless_takes_the_desktops_shape(self):
+        old = {'output_res': '1920x1080', 'aspect_ratio': 'auto'}
+        for desktop, output in [((2560, 1080), (2560, 1080)), ((3440, 1440), (2580, 1080)),
+                                ((5120, 1440), (3840, 1080)), ((1920, 1200), (1920, 1200))]:
+            with self.subTest(desktop=desktop):
+                self.assertEqual(self.sizes(old, desktop, 'borderless'), (output, output))
+                self.assertEqual(self.sizes({**old, 'window_mode': 'borderless'}, desktop), (output, output))
+                # Windowed and exclusive fullscreen keep the chosen size (the display switches to it).
+                self.assertIsNone(self.sizes(old, desktop, 'windowed'))
+                self.assertIsNone(self.sizes(old, desktop, 'fullscreen'))
+
+    def test_the_old_launchers_16x9_size_is_not_a_choice_on_another_shape(self):
+        old = {'output_res': '1920x1080'}  # no aspect_ratio: written before every resolution was offered
+        for desktop, output in [((2560, 1080), (2560, 1080)), ((3440, 1440), (2580, 1080)),
+                                ((5120, 1440), (3840, 1080)), ((1920, 1200), (1728, 1080))]:
+            with self.subTest(desktop=desktop):
+                for mode in ('windowed', 'fullscreen', 'borderless'):
+                    self.assertEqual(self.sizes(old, desktop, mode), (output, output))
+        self.assertEqual(patches.output_size({'output_res': '2560x1440'}, (3440, 1440)), (3440, 1440))
+        # On a 16:9 desktop, a size the old launcher did not offer, or with aspect_ratio set: the choice.
+        self.assertIsNone(self.sizes(old, (3840, 2160)))
+        self.assertEqual(patches.output_size({'output_res': '1720x720'}, (2560, 1080)), (1720, 720))
+        self.assertIsNone(self.sizes({'output_res': '1920x1080', 'aspect_ratio': 'auto'}, (2560, 1080)))
+        self.assertTrue(patches.old_launcher_output({'output_res': '1920x1080'}, (2560, 1080)))
+        self.assertFalse(patches.old_launcher_output({'output_res': '1920x1080'}, None))
+
+    def test_unset_is_1080_lines_in_the_desktops_shape(self):
+        self.assertEqual(self.sizes({}, (2560, 1080)), ((2560, 1080), (2560, 1080)))
+        self.assertIsNone(self.sizes({}, (3840, 2160)))
+        self.assertIsNone(self.sizes({}, None))  # unknown desktop: the game's own size
+        # 16:9 last: the game's picture with bars.
+        self.assertIsNone(self.sizes({'aspect_ratio': '16:9'}, (2560, 1080), 'borderless'))
+
+    def test_print_scaled_takes_the_desktop_and_window_mode(self):
+        with tempfile.TemporaryDirectory() as folder:
+            ini = Path(folder) / 'bbport.ini'
+            ini.write_text('output_res=1920x1080\naspect_ratio=auto\nupscaler=off\n', encoding='utf-8')
+            import subprocess, sys
+            run = lambda *extra: subprocess.run(
+                [sys.executable, str(ROOT / 'scripts/patches.py'), '--print-scaled', '--settings', str(ini), *extra],
+                capture_output=True, text=True, check=True).stdout.strip()
+            self.assertEqual(run(), '')
+            self.assertEqual(run('--desktop', '2560x1080', '--window-mode', 'borderless'), '2560x1080 2560x1080')
+            self.assertEqual(run('--desktop', '2560x1080', '--window-mode', 'windowed'), '')
+
+
+class FpsListTests(unittest.TestCase):
+    """The FPS++ lists follow shadps4-emu/ps4_cheats of 2026-10-02 (timesteps, foliage wind)."""
+
+    def writes(self, preset):
+        return compile_patches(XML, patches.FPS_PRESETS[preset], '01.09', SEGMENTS)
+
+    def test_lists_only_layer_a_float_over_its_own_immediate(self):
+        # A 9-byte "mov dword [rsp+18h], imm32" followed by a 4-byte write of the immediate is the
+        # lists' own layering. Any other overlap is two patches fighting over the same bytes
+        # (upstream's call at 0x02715D71 over the one at 0x02715D75 was one).
+        for preset in ('60', '90', 'uncap'):
+            with self.subTest(preset=preset):
+                spans = sorted((offset, offset + len(data)) for offset, data in self.writes(preset))
+                for (start, end), (next_start, next_end) in zip(spans, spans[1:]):
+                    if next_start < end:
+                        self.assertEqual((end - start, next_start - start, next_end - next_start), (9, 5, 4))
+
+    def test_foliage_wind_goes_to_the_frame_timer_in_every_list(self):
+        for preset in ('60', '90', 'uncap'):
+            with self.subTest(preset=preset):
+                found = {offset + EBOOT_BASE: data for offset, data in self.writes(preset)}
+                self.assertEqual(found[0x02713D91], bytes.fromhex('736B0403'))
+                self.assertIn(0x02418E3D, found)
+                self.assertIn(0x02418E9C, found)
+                self.assertNotIn(0x02715D71, found)
+
+    def test_lists_do_not_write_the_stale_physics_float(self):
+        # 0x011383CA sits inside a NOP of the game: the old lists' write there never did anything.
+        for preset in ('60', '90', 'uncap'):
+            with self.subTest(preset=preset):
+                for offset, data in self.writes(preset):
+                    self.assertFalse(offset <= 0x011383CA - EBOOT_BASE < offset + len(data))
+
+    def test_uncap_keeps_the_games_240_fps_ceiling(self):
+        # ps4_cheats' 2026-10-02 Uncap list writes a frame time of 0.0 at three of the four frame
+        # limiter sites, which let the title screen and menus run at 1100 to 1400 FPS. Ours keeps
+        # 1/240 there, the ceiling the older list had, so menus stay at 240 FPS with no frame cap.
+        found = {offset + EBOOT_BASE: data for offset, data in self.writes('uncap')}
+        for address in (0x02434840, 0x0243485A, 0x0243487E, 0x024348B3):
+            with self.subTest(address=hex(address)):
+                self.assertEqual(found[address], bytes.fromhex('41C74424188988883B'))
+
+    def test_sprint_fix_stays_with_the_high_frame_rates(self):
+        self.assertNotIn('Sprint Fix (High FPS)', patches.FPS_PRESETS['60'])
+        for preset in ('90', 'uncap'):
+            self.assertIn('Sprint Fix (High FPS)', patches.FPS_PRESETS[preset])
+
+    def test_every_line_of_the_uncap_lists_becomes_one_write(self):
+        # The expected count comes from the XML: one write per <Line> of each listed 01.09 patch.
+        # A list edit that changes the count is fine as long as this still holds.
+        names = patches.FPS_PRESETS['uncap']
+        lines = sum(len(meta.findall('./PatchList/Line'))
+                    for meta in ET.parse(XML).getroot().iter('Metadata')
+                    if meta.get('Name') in names and meta.get('AppVer') == '01.09')
+        self.assertGreater(lines, 0)
+        self.assertEqual(len(self.writes('uncap')), lines)
+
+    def unknown_names(self, presets):
+        """(preset, name) of every listed patch the XML does not have for the app version."""
+        known = {meta.get('Name') for meta in ET.parse(XML).getroot().iter('Metadata')
+                 if meta.get('AppVer') == patches.APP_VERSION}
+        return [(preset, name) for preset, names in presets.items() for name in names
+                if name not in known]
+
+    def test_every_preset_names_patches_the_xml_has(self):
+        # The write-count test above reads the same XML with the same filter, so a misspelled or
+        # missing name would drop out on both sides of it. This one names the culprit.
+        self.assertEqual(self.unknown_names(patches.FPS_PRESETS), [])
+
+    def test_a_misspelled_preset_name_is_reported(self):
+        presets = {'60': ['60 FPS++'], 'uncap': ['Uncap FPS+', 'Sprint Fix (High FPS)']}
+        self.assertEqual(self.unknown_names(presets), [('uncap', 'Uncap FPS+')])
+
+
+def clean_elf():
+    """The 1.09 eboot as prepare.py's eboot.elf: BLOODBORNE_EBOOT (ci-check sets it from the
+    rig's game) or out/eboot.elf from a run; None without either."""
+    eboot = os.environ.get('BLOODBORNE_EBOOT')
+    if eboot and Path(eboot).is_file():
+        from prepare import parse_self
+        return parse_self(Path(eboot).read_bytes())[0]
+    path = ROOT / 'out/eboot.elf'
+    return path.read_bytes() if path.is_file() else None
+
+
+def elf_loads(elf):
+    """[(vaddr, file offset, file size)] of the ELF's loadable segments."""
+    phoff, = struct.unpack_from('<Q', elf, 0x20)
+    phentsize, phnum = struct.unpack_from('<HH', elf, 0x36)
+    loads = []
+    for i in range(phnum):
+        kind, _f, offset, vaddr, _p, filesz, _m, _a = struct.unpack_from('<IIQQQQQQ', elf, phoff + i * phentsize)
+        if kind == 1:
+            loads.append((vaddr, offset, filesz))
+    return loads
+
+
+def with_patches_applied(elf, names):
+    """`elf` with the named patches written over it, as a modified eboot.bin ships them."""
+    out = bytearray(elf)
+    loads = elf_loads(elf)
+    for at, data in compile_patches(XML, names, '01.09', SEGMENTS):
+        vaddr, offset, _size = next(l for l in loads if l[0] <= at < l[0] + l[2])
+        out[offset + at - vaddr:offset + at - vaddr + len(data)] = data
+    return bytes(out)
+
+
+def one_segment_elf():
+    """An ELF with one zero-filled segment over the whole image (code unlike the game's)."""
+    header = bytearray(64)
+    header[0:7] = b'\x7fELF\x02\x01\x01'
+    struct.pack_into('<Q', header, 0x20, 64)
+    struct.pack_into('<HH', header, 0x36, 56, 1)
+    return bytes(header) + struct.pack('<IIQQQQQQ', 1, 5, 0, 0, 0, 0x6000000, 0x6000000, 0x1000)
+
+
+class PatchGroupTests(unittest.TestCase):
+    """Supermedo 48e41b7: an eboot.bin whose code differs gets only the groups of patches whose
+    code it did not change (a 60 fps patch applied to the file keeps the resolution and effect
+    patches), none over code it changed. bbport's game check refuses such an eboot.bin unless
+    BB_SKIP_GAME_CHECK=1; this keeps the patches off changed code then."""
+
+    def test_groups_cover_every_switch_and_enemy_control_goes_with_the_frame_rate(self):
+        groups = patches.PATCH_GROUPS
+        self.assertEqual(set(groups), {'fps', 'resolution', 'effects', 'fixes'})
+        for names in patches.FPS_PRESETS.values():
+            self.assertTrue(set(names) <= set(groups['fps']))
+        self.assertIn('Enemy Control', groups['fps'])
+        self.assertNotIn('Enemy Control', groups['effects'])
+        self.assertIn(RESOLUTION_TEMPLATE, groups['resolution'])
+        self.assertIn(patches.GX_COMMAND_HEAP, groups['fixes'])
+        for name in patches.effect_patches({key: '1' for key in patches.EFFECTS} | {'model_lod': '2'}):
+            self.assertIn(patches.GROUP_OF.get(name), ('effects', 'fps'), name)
+
+    def test_groups_write_disjoint_code(self):
+        sites = {group: patches.patch_sites(XML, '01.09', names) for group, names in patches.PATCH_GROUPS.items()}
+        for first in sites:
+            for second in sites:
+                if first < second:
+                    for a, b in sites[first]:
+                        for c, d in sites[second]:
+                            self.assertFalse(a < d and c < b, f'{first} and {second} share {a:#x}')
+
+    def test_group_list_reads_as_a_sentence(self):
+        self.assertEqual(patches.group_list({'fps'}), 'frame rate')
+        self.assertEqual(patches.group_list({'fps', 'effects'}), 'frame rate and effect options')
+
+    def test_other_code_gets_no_group(self):
+        elf = one_segment_elf()
+        self.assertEqual(patches.matching_groups_of(lambda start, end: patches.eboot_bytes(elf, start, end)), set())
+
+    def test_a_game_version_without_fingerprints_keeps_every_group(self):
+        self.assertEqual(patches.matching_groups_of(lambda start, end: b'', '01.00'), set(patches.PATCH_GROUPS))
+
+    def compile(self, elf, env=None, fps='60'):
+        """patches.py as run.py runs it on `elf`; returns (log, number of writes, write offsets)."""
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            (out / 'eboot.elf').write_bytes(elf)
+            (out / 'bbport.ini').write_text('upscaler=fsr3\npreset=1\n')
+            settings = {key: value for key, value in os.environ.items()
+                        if key not in ('BB_FORCE_PATCHES', 'BB_SKIP_NETWORK_CHOICE')}
+            settings.update(env or {})
+            run = subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out),
+                                  '--fps', fps, '--settings', str(out / 'bbport.ini'),
+                                  '--game-dir', str(out), '--xml', str(XML), '--render-res', '1280x720'],
+                                 env=settings, capture_output=True, text=True, encoding='utf-8')
+            self.assertEqual(run.returncode, 0, run.stderr)
+            blob = (out / 'patches.bin').read_bytes()
+        count, = struct.unpack_from('<Q', blob, 16)
+        position, offsets = 24, set()
+        for _ in range(count):
+            offset, length = struct.unpack_from('<QQ', blob, position)
+            offsets.add(offset)
+            position += 16 + length
+        return run.stdout, count, offsets
+
+    def test_other_code_is_not_patched_unless_forced(self):
+        log, count, _ = self.compile(one_segment_elf())
+        self.assertEqual(count, 0)
+        self.assertIn('none applied', log)
+        _, forced, _ = self.compile(one_segment_elf(), {'BB_FORCE_PATCHES': '1'})
+        self.assertGreater(forced, 0)
+
+
+@unittest.skipUnless(clean_elf(), 'needs the 1.09 eboot (BLOODBORNE_EBOOT or out/eboot.elf)')
+class PatchGroupGameTests(unittest.TestCase):
+    """The groups against the real 1.09 executable."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.clean = clean_elf()
+
+    def groups(self, elf):
+        return patches.matching_groups_of(lambda start, end: patches.eboot_bytes(elf, start, end))
+
+    def test_stored_fingerprints_match_the_clean_game(self):
+        self.assertEqual(self.groups(self.clean), set(patches.PATCH_GROUPS))
+
+    def test_a_60_fps_eboot_keeps_resolution_effects_and_fixes(self):
+        modified = with_patches_applied(self.clean, ['60 FPS++'])
+        self.assertEqual(self.groups(modified), {'resolution', 'effects', 'fixes'})
+
+    def test_changed_resolution_code_keeps_the_frame_rate(self):
+        modified = with_patches_applied(self.clean, [RESOLUTION_TEMPLATE])
+        self.assertEqual(self.groups(modified), {'fps', 'effects', 'fixes'})
+
+    def test_main_leaves_the_changed_group_out(self):
+        fps_offsets = {offset for offset, _ in compile_patches(XML, ['60 FPS++'], '01.09', SEGMENTS)}
+        log, count, offsets = PatchGroupTests.compile(self, self.clean)
+        self.assertTrue(fps_offsets <= offsets)
+        self.assertNotIn('code differs', log)
+        log, count, offsets = PatchGroupTests.compile(self, with_patches_applied(self.clean, ['60 FPS++']))
+        self.assertIn('frame rate code differs', log)
+        self.assertFalse(fps_offsets & offsets)
+        self.assertIn('scene 1280x720', log)  # the resolution group still applies
+        self.assertGreater(count, 0)
+
+
+class PatchedGameTests(unittest.TestCase):
+    """Patches exist for one game version; run.sh asks patches.py whether a game gets them."""
+
+    def test_only_the_patch_version_or_an_unreadable_one_gets_patches(self):
+        self.assertEqual(patches.APP_VERSION, '01.09')
+        for version, expected in ((None, True), ('', True), ('01.09', True), ('01.00', False), ('01.10', False)):
+            with self.subTest(version=version):
+                self.assertEqual(patches.game_is_patched(version, {}), expected)
+
+    def test_force_patches_wins_but_an_empty_value_does_not(self):
+        self.assertTrue(patches.game_is_patched('01.00', {'BB_FORCE_PATCHES': '1'}))
+        self.assertFalse(patches.game_is_patched('01.00', {'BB_FORCE_PATCHES': ''}))
+
+    def print_patched(self, version):
+        import subprocess
+        import sys
+        from test_game_check import param_sfo
+        with tempfile.TemporaryDirectory() as directory:
+            game = Path(directory)
+            if version:
+                (game / 'sce_sys').mkdir()
+                (game / 'sce_sys/param.sfo').write_bytes(param_sfo({'APP_VER': version}))
+            env = {key: value for key, value in os.environ.items() if key != 'BB_FORCE_PATCHES'}
+            run = subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--print-patched',
+                                  '--game-dir', str(game)], env=env, capture_output=True, text=True,
+                                 encoding='utf-8')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        return run.stdout.strip()
+
+    def test_the_command_line_answers_for_run_sh(self):
+        self.assertEqual(self.print_patched('01.09'), 'patched')
+        self.assertEqual(self.print_patched('01.00'), 'unpatched')
+        self.assertEqual(self.print_patched(None), 'patched')  # no param.sfo: unreadable
+
+
+class NoteTests(unittest.TestCase):
+    """The launcher shows a patch's Note as a tooltip after turning the two characters \\n into a
+    line break. A raw line break inside the attribute is no use: XML turns it into a space."""
+
+    def test_multi_line_notes_keep_their_line_breaks(self):
+        for name in ('30 FPS++', '60 FPS++', '90 FPS++'):
+            with self.subTest(name=name):
+                notes = [m.get('Note') for m in ET.parse(XML).getroot().iter('Metadata')
+                         if m.get('Name') == name and m.get('AppVer') == '01.09']
+                self.assertEqual(len(notes), 1)
+                shown = notes[0].replace('\\n', '\n')  # what bbport_launcher.py does
+                first, second = shown.split('\n')
+                self.assertTrue(first.rstrip().endswith('etc..'), first)
+                self.assertTrue(second.startswith('Will help'), second)
+
+    def test_no_note_spans_source_lines(self):
+        import re
+        text = XML.read_text(encoding='utf-8')
+        self.assertEqual(re.findall(r'Note="[^"]*[\r\n][^"]*"', text), [])
+
+
+class PhysicsStepTests(unittest.TestCase):
+    # The FPS presets set the physics step, a float immediate at 0x00F383CA (1/30 in the game).
+    # "60FPS (no deltatime)" still wrote 0x011383CA, inside a multi-byte NOP, with a garbled value
+    # (1/15): the step was never set (Supermedo's bbport be1cde36 moved the others).
+    def test_presets_write_the_physics_step(self):
+        for preset, step in [('30 FPS++', 60), ('60FPS (no deltatime)', 60), ('60 FPS++', 30),
+                             ('90 FPS++', 90), ('Uncap FPS++', 90)]:
+            with self.subTest(preset=preset):
+                writes = dict(compile_patches(XML, [preset], '01.09', SEGMENTS))
+                value = struct.unpack('<f', writes[0x00F383CA - EBOOT_BASE])[0]
+                self.assertAlmostEqual(1 / value, step, places=2)
+                self.assertNotIn(0x011383CA - EBOOT_BASE, writes)
+
+
+class DebugPatchTests(unittest.TestCase):
+    def test_camera_patch_is_optional_and_compatible_with_fps_and_debug_menu(self):
+        self.assertEqual(effect_patches({'debug_camera': '0', 'debug_menu': '0'}), [])
+        camera = effect_patches({'debug_camera': '1'})
+        writes = compile_patches(XML, camera, '01.09', SEGMENTS)
+        self.assertGreater(len(writes), 0)
+        camera_bytes = {offset+i: byte for offset, data in writes for i, byte in enumerate(data)}
+        for patch in ('Uncap FPS++', '60 FPS++', '90 FPS++', 'Restore Debug Menu (READ NOTES)'):
+            for offset, data in compile_patches(XML, [patch], '01.09', SEGMENTS):
+                for i, byte in enumerate(data):
+                    if offset+i in camera_bytes:
+                        self.assertEqual(camera_bytes[offset+i], byte, patch)
+
+    def test_debug_menu_needs_both_fonts_where_the_game_reads_them(self):
+        names = effect_patches({'debug_menu': '1'})
+        menu = 'Restore Debug Menu (READ NOTES)'
+        with tempfile.TemporaryDirectory() as directory:
+            game = Path(directory)
+            self.assertEqual(validate_patch_requirements(['Restore Debug Camera'], game),
+                             ['Restore Debug Camera'])
+            # Without the fonts the patch is left out (the game would crash opening the menu).
+            self.assertNotIn(menu, validate_patch_requirements(names, game))
+            # The old instructions' folder: still left out, the game reads adhoc/font.
+            old = game / 'dvdroot_ps4/font'
+            old.mkdir(parents=True)
+            (old / 'DbgFont14h.ccm').write_bytes(b'test')
+            (old / 'DbgFont14h.tpf').write_bytes(b'test')
+            self.assertNotIn(menu, validate_patch_requirements(names, game))
+            # A mod's own case (Adhoc/Font/dbgfont14h.*) is found; an empty file is not enough.
+            font = game / 'dvdroot_ps4/Adhoc/Font'
+            font.mkdir(parents=True)
+            (font / 'dbgfont14h.ccm').write_bytes(b'test')
+            (font / 'dbgfont14h.tpf').touch()
+            self.assertNotIn(menu, validate_patch_requirements(names, game))
+            (font / 'dbgfont14h.tpf').write_bytes(b'test')
+            self.assertIn(menu, validate_patch_requirements(names, game))
+
+    def test_patches_that_cannot_go_together_are_one_table(self):
+        self.assertIn(('Restore Debug Camera', 'Enemy Control'),
+                      [(kept, dropped) for kept, dropped, _ in patches.EXCLUSIVE_PATCHES])
+        # The effect switches keep the first of a pair and drop the second.
+        names = effect_patches({'debug_camera': '1', 'cheat_enemy_control': '1'})
+        self.assertIn('Restore Debug Camera', names)
+        self.assertNotIn('Enemy Control', names)
+        for kept, dropped, _ in patches.EXCLUSIVE_PATCHES:
+            with self.subTest(pair=(kept, dropped)):
+                with self.assertRaisesRegex(ValueError, f'{kept} conflicts with {dropped}'):
+                    validate_patch_requirements([dropped, kept], Path('.'))
+
+    def test_a_release_build_applies_no_cheats_or_debug_tools(self):
+        # Kaniel 2026-11-04: a release (scripts/build_info.json says production) leaves out every
+        # cheat and the debug menu and camera, whatever bbport.ini says; the tweaks stay.
+        # (No Rally would drop No Rally Decay on its own.)
+        everything = {key: '1' for key in patches.EFFECTS if key != 'tweak_no_rally'}
+        dev = effect_patches(everything, production=False)
+        release = effect_patches(everything, production=True)
+        for key in ('cheat_no_death', 'cheat_stealth', 'cheat_silent', 'cheat_rally_no_decay',
+                    'debug_camera', 'debug_menu'):
+            self.assertIn(key, patches.DEV_TOOL_KEYS)
+            self.assertIn(patches.EFFECTS[key][1], dev)
+            self.assertNotIn(patches.EFFECTS[key][1], release)
+        self.assertNotIn('Enemy Control', release)
+        for key in ('tweak_camera_distance', 'tweak_ragdoll', 'skip_intro'):
+            self.assertIn(patches.EFFECTS[key][1], release)
+        self.assertFalse(any(n in patches.GAMEPLAY_PATCHES for n in release))
+        self.assertIn('Disable Rally (HP Regain)',
+                      effect_patches({'tweak_no_rally': '1'}, production=True))
+
+    def test_the_build_mode_comes_from_build_info(self):
+        with tempfile.TemporaryDirectory() as folder:
+            info = Path(folder) / 'build_info.json'
+            self.assertFalse(patches.is_production(info))  # none: a dev build
+            info.write_text('{"production": true}\n', encoding='utf-8')
+            self.assertTrue(patches.is_production(info))
+            info.write_text('{"production": false}', encoding='utf-8')
+            self.assertFalse(patches.is_production(info))
+            info.write_text('not json', encoding='utf-8')
+            self.assertFalse(patches.is_production(info))
+        # This checkout is no release.
+        self.assertFalse(patches.is_production())
+
+    def test_conflicting_enemy_control_patch_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'conflicts with Enemy Control'):
+            validate_patch_requirements(['Enemy Control', 'Restore Debug Camera'], Path('.'))
+
+
+EXTERNAL = """<?xml version="1.0"?>
+<Patch>
+  <TitleID><ID>CUSA03173</ID><ID>CUSA00207</ID></TitleID>
+  <Metadata Title="Bloodborne" Name="On" Author="x" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">
+    <PatchList><Line Type="bytes" Address="0x00401000" Value="9090"/></PatchList>
+  </Metadata>
+  <Metadata Title="Bloodborne" Name="Off" Author="x" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin">
+    <PatchList><Line Type="bytes32" Address="0x00402000" Value="0x12345678"/></PatchList>
+  </Metadata>
+  <Metadata Title="Bloodborne" Name="Mask" Author="x" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">
+    <PatchList><Line Type="mask" Value="90 ?? 90" Offset="0"/></PatchList>
+  </Metadata>
+  <Metadata Title="Bloodborne" Name="Old" Author="x" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+    <PatchList><Line Type="bytes" Address="0x00403000" Value="90"/></PatchList>
+  </Metadata>
+</Patch>"""
+
+
+class ExternalPatchTests(unittest.TestCase):
+    def test_selection_and_unsupported_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / 'extra.xml').write_text(EXTERNAL)
+            (folder / 'other.xml').write_text(EXTERNAL.replace('CUSA03173', 'CUSA99999')
+                                              .replace('CUSA00207', 'CUSA99998'))
+            (folder / 'broken.xml').write_text('<Patch>')
+            found = external_patches(folder)
+            self.assertEqual([key for key, _, _ in found],
+                             ['extra.xml/On', 'extra.xml/Off', 'extra.xml/Mask'])
+            # The file's isEnabled; the mask patch is skipped as a whole.
+            writes = compile_external(external_selection(found, None), SEGMENTS)
+            self.assertEqual(writes, [(0x1000, bytes.fromhex('9090'))])
+            config = folder / 'patches.json'
+            config.write_text('{"enabled": ["extra.xml/Off"], "disabled": ["extra.xml/On"]}')
+            writes = compile_external(external_selection(found, config), SEGMENTS)
+            self.assertEqual(writes, [(0x2000, (0x12345678).to_bytes(4, 'little'))])
+
+    def test_built_in_file_is_not_external(self):
+        self.assertEqual(external_patches(XML.parent), [])
+
+    def test_external_fps_patch_replaces_the_preset(self):
+        # "60FPS (no deltatime)" writes at 60 FPS++'s addresses with other values: applied over
+        # the preset, the two mixed (Supermedo 8042500). The preset goes whole; others stay.
+        named = [('60 FPS++', 0x100, b'\x01\x02'), ('60 FPS++', 0x200, b'\x03'),
+                 ('Other', 0x300, b'\x04')]
+        external = [('fps.xml/60FPS (no deltatime)', 0x101, b'\x09')]
+        kept, replaced = patches.drop_replaced_fps(named, ['60 FPS++'], external)
+        self.assertEqual(kept, [('Other', 0x300, b'\x04')])
+        self.assertEqual(replaced, ['fps.xml/60FPS (no deltatime)'])
+        # An external patch elsewhere leaves the preset alone.
+        kept, replaced = patches.drop_replaced_fps(named, ['60 FPS++'],
+                                                   [('x.xml/On', 0x1000, b'\x90')])
+        self.assertEqual(kept, named)
+        self.assertEqual(replaced, [])
+        # Over a non-FPS patch only: the preset stays (the external one wins those bytes).
+        kept, replaced = patches.drop_replaced_fps(named, ['60 FPS++'],
+                                                   [('x.xml/On', 0x300, b'\x90')])
+        self.assertEqual(kept, named)
+        self.assertEqual(replaced, [])
+
+
+class GxCommandHeapTests(unittest.TestCase):
+    """Two per-frame GX command heaps of 1 MiB instead of 256 KiB (deadinside28 PR #224): the game
+    writes through NULL when one fills (their #162). On by default; BB_GX_COMMAND_HEAP=0 off."""
+
+    def test_on_unless_the_environment_turns_it_off(self):
+        self.assertTrue(patches.gx_command_heap({}))
+        self.assertTrue(patches.gx_command_heap({'BB_GX_COMMAND_HEAP': '1'}))
+        self.assertFalse(patches.gx_command_heap({'BB_GX_COMMAND_HEAP': '0'}))
+
+    def test_patch_writes_two_heap_sizes(self):
+        meta = [m for m in ET.parse(XML).getroot().iter('Metadata')
+                if m.get('Name') == patches.GX_COMMAND_HEAP and m.get('AppVer') == '01.09']
+        self.assertEqual(len(meta), 1)
+        self.assertEqual(meta[0].get('isEnabled'), 'false')  # only patches.py's switch turns it on
+        writes = compile_patches(XML, [patches.GX_COMMAND_HEAP], '01.09', SEGMENTS)
+        self.assertEqual([(offset + EBOOT_BASE, data) for offset, data in writes],
+                         [(0x02595c0a, (1 << 20).to_bytes(4, 'little')),
+                          (0x02595c47, (1 << 20).to_bytes(4, 'little'))])
+
+
+class SkipNetworkChoiceTests(unittest.TestCase):
+    """The title's PLAY ONLINE / PLAY OFFLINE dialog is skipped by default."""
+    ADDRESS = 0x01F39030
+
+    def test_on_unless_the_environment_turns_it_off(self):
+        self.assertTrue(patches.skip_network_choice({}))
+        self.assertTrue(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': '1'}))
+        self.assertFalse(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': '0'}))
+
+    def test_off_spellings_turn_it_off_in_any_case(self):
+        for value in ('0', 'false', 'False', 'FALSE', 'no', 'No', 'off', 'OFF', ' off '):
+            with self.subTest(value=value):
+                self.assertFalse(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': value}))
+
+    def test_unset_empty_and_other_values_keep_it_on(self):
+        for value in ('', '1', 'true', 'yes', 'on', 'anything'):
+            with self.subTest(value=value):
+                self.assertTrue(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': value}))
+
+    def test_patch_is_one_function_body_and_not_enabled_by_the_file(self):
+        meta = [m for m in ET.parse(XML).getroot().iter('Metadata')
+                if m.get('Name') == patches.SKIP_NETWORK_CHOICE and m.get('AppVer') == '01.09']
+        self.assertEqual(len(meta), 1)
+        self.assertEqual(meta[0].get('isEnabled'), 'false')  # only patches.py's switch turns it on
+        writes = compile_patches(XML, [patches.SKIP_NETWORK_CHOICE], '01.09', SEGMENTS)
+        self.assertEqual([(offset + EBOOT_BASE, len(data)) for offset, data in writes],
+                         [(self.ADDRESS, 46)])
+        self.assertEqual(writes[0][1][:4].hex(), '554889e5')  # push rbp; mov rbp, rsp
+        self.assertEqual(writes[0][1][-1:], b'\xc3')  # ret
+
+    def compile(self, env):
+        """patches.py as run.py runs it, on an ELF with one segment; returns (log, writes)."""
+        import os
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            header = bytearray(64)
+            header[0:7] = b'\x7fELF\x02\x01\x01'
+            struct.pack_into('<Q', header, 0x20, 64)
+            struct.pack_into('<HH', header, 0x36, 56, 1)
+            (out / 'eboot.elf').write_bytes(bytes(header) + struct.pack('<IIQQQQQQ', 1, 5, 0, 0, 0, 0x6000000, 0x6000000, 0x1000))
+            settings = {key: value for key, value in os.environ.items() if key != 'BB_SKIP_NETWORK_CHOICE'}
+            settings['BB_FORCE_PATCHES'] = '1'  # the zero-filled ELF has none of the game's code
+            settings.update(env)
+            run = subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out),
+                                  '--fps', '60', '--settings', str(out / 'none.ini'),
+                                  '--game-dir', str(out), '--xml', str(XML)],
+                                 env=settings, capture_output=True, text=True, encoding='utf-8')
+            self.assertEqual(run.returncode, 0, run.stderr)
+            blob = (out / 'patches.bin').read_bytes()
+        count, = struct.unpack_from('<Q', blob, 16)
+        position, writes = 24, {}
+        for _ in range(count):
+            offset, length = struct.unpack_from('<QQ', blob, position)
+            writes[offset] = blob[position + 16:position + 16 + length]
+            position += 16 + length
+        return run.stdout, writes
+
+    def test_main_applies_it_by_default_and_not_with_the_switch_off(self):
+        log, writes = self.compile({})
+        self.assertIn(patches.SKIP_NETWORK_CHOICE, log)
+        self.assertEqual(len(writes[self.ADDRESS - EBOOT_BASE]), 46)
+        log, writes = self.compile({'BB_SKIP_NETWORK_CHOICE': '0'})
+        self.assertNotIn(patches.SKIP_NETWORK_CHOICE, log)
+        self.assertNotIn(self.ADDRESS - EBOOT_BASE, writes)
+class NetworkChoiceTests(unittest.TestCase):
+    def test_skipped_by_default(self):
+        self.assertTrue(patches.skip_network_choice({}))
+        self.assertFalse(patches.skip_network_choice({'BB_SKIP_NETWORK_CHOICE': '0'}))
+
+    def test_seamless_coop_plays_online(self):
+        # Co-op needs PLAY ONLINE: the skip would put the game offline, whatever the launcher says.
+        coop = {'SHADPS4_BLOODBORNE_SEAMLESS_COOP': '1'}
+        self.assertFalse(patches.skip_network_choice(coop))
+        self.assertFalse(patches.skip_network_choice({**coop, 'BB_SKIP_NETWORK_CHOICE': '1'}))
+
+
+class IntelTonemapTests(unittest.TestCase):
+    def cpuinfo(self, vendor):
+        path = Path(tempfile.mkdtemp()) / 'cpuinfo'
+        path.write_text(f'processor\t: 0\nvendor_id\t: {vendor}\nmodel name\t: x\n')
+        return str(path)
+
+    def test_on_for_intel_off_for_amd(self):
+        self.assertTrue(patches.intel_tonemap_fix({}, self.cpuinfo('GenuineIntel')))
+        self.assertFalse(patches.intel_tonemap_fix({}, self.cpuinfo('AuthenticAMD')))
+
+    def test_environment_forces_it(self):
+        amd, intel = self.cpuinfo('AuthenticAMD'), self.cpuinfo('GenuineIntel')
+        self.assertTrue(patches.intel_tonemap_fix({'BB_INTEL_TONEMAP_FIX': '1'}, amd))
+        self.assertFalse(patches.intel_tonemap_fix({'BB_INTEL_TONEMAP_FIX': '0'}, intel))
+
+    def test_patch_exists_for_109(self):
+        xml = ET.parse(ROOT / 'patches/Bloodborne.xml')
+        names = [m.get('Name') for m in xml.iter('Metadata')]
+        self.assertIn(patches.INTEL_TONEMAP, names)
+
+
+class BuildCheckNamesTests(unittest.TestCase):
+    """Build check on join: the patches that change the game (cheats and gameplay tweaks) must be the
+    same for everyone in a party; the rest (frame rate, effects, resolution) only go in the log."""
+
+    def test_gameplay_patches_get_short_names_and_the_rest_stays_apart(self):
+        gameplay, other = patches.build_check_names(
+            ['60 FPS++', 'Player No Dead (Read note)', 'Disable DoF', 'Disable Rally (HP Regain)'])
+        self.assertEqual(gameplay, ['no death', 'no rally'])
+        self.assertEqual(other, ['60 FPS++', 'Disable DoF'])
+
+    def test_every_cheat_and_gameplay_tweak_of_the_launcher_is_checked(self):
+        for key in ('cheat_no_death', 'cheat_stealth', 'cheat_silent', 'cheat_rally_no_decay',
+                    'cheat_enemy_control', 'tweak_no_rally'):
+            name = patches.EFFECTS[key][1]
+            self.assertIn(name, patches.GAMEPLAY_PATCHES, key)
+        xml = ET.parse(ROOT / 'patches/Bloodborne.xml')
+        names = {m.get('Name') for m in xml.iter('Metadata')}
+        self.assertLessEqual(set(patches.GAMEPLAY_PATCHES), names)
+
+    def run_main_on_a_blank_eboot(self, **env):
+        """patches.py's main on an eboot of zeros (no patch group's fingerprint matches it): the
+        names it wrote beside patches.bin."""
+        import json
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            header = bytearray(64)
+            header[0:7] = b'\x7fELF\x02\x01\x01'
+            struct.pack_into('<Q', header, 0x20, 64)
+            struct.pack_into('<HH', header, 0x36, 56, 1)
+            (out / 'eboot.elf').write_bytes(bytes(header) + struct.pack('<IIQQQQQQ', 1, 5, 0, 0, 0, 0x6000000,
+                                                                        0x6000000, 0x1000))
+            (out / 'bbport.ini').write_text('cheat_no_death=1\neffect_dof=0\n', encoding='utf-8')
+            (out / 'patches-names.json').write_text('{"gameplay": ["stale"], "other": []}\n', encoding='utf-8')
+            run = subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out),
+                                  '--fps', '60', '--settings', str(out / 'bbport.ini'),
+                                  '--game-dir', str(out), '--xml', str(XML)],
+                                 env={**os.environ, 'BB_INTEL_TONEMAP_FIX': '0', **env},
+                                 capture_output=True, text=True, encoding='utf-8')
+            self.assertEqual(run.returncode, 0, run.stderr)
+            return json.loads((out / 'patches-names.json').read_text(encoding='utf-8'))
+
+    def test_main_writes_the_names_beside_patches_bin(self):
+        # BB_FORCE_PATCHES: the blank eboot matches no group's fingerprint (eboot check per patch
+        # group, #388), and the names are those of the patches applied.
+        names = self.run_main_on_a_blank_eboot(BB_FORCE_PATCHES='1')
+        self.assertEqual(names['gameplay'], ['no death'])
+        self.assertIn('60 FPS++', names['other'])
+        self.assertIn('Disable DoF', names['other'])
+
+    def test_an_eboot_no_patch_fits_names_none(self):
+        # No group fits, so none is applied: the build check must not tell the server about a
+        # cheat this game does not have (nor keep the names of an earlier run).
+        names = self.run_main_on_a_blank_eboot(BB_FORCE_PATCHES='')
+        self.assertEqual(names, {'gameplay': [], 'other': []})
+
+
+if __name__ == '__main__':
+    unittest.main()
