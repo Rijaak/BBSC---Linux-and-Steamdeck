@@ -244,23 +244,29 @@ def validate_patch_requirements(names, game):
     return names
 
 
-# LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): the community "Light Grid" patches (Kyo) cut the
-# light grid's draw calls, each for one window/full-screen size ("use the version that matches your
-# window/fullscreen resolution, not the render resolution"): the one matching the chosen output
-# goes in by itself (a Steam Deck's 1280x800, as the shadPS4 Deck setup had it); other sizes keep
-# the game's own grid. bbport.ini light_grid=0 leaves it out. Not in a fingerprinted group (their
-# sites would change the groups' fingerprints): applied with the clean eboot only, as extra names are.
-LIGHT_GRIDS={(1280,800):'1280x800 Light Grid For SteamDeck (READ NOTES)',
-             (1920,1080):'1080p Light Grid (READ NOTES)',
-             (2560,1440):'1440p Light Grid (READ NOTES)',
-             (3840,2160):'4k Light Grid (READ NOTES)'}
+# LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): the community "Light Grid" patches (Kyo) set the
+# size of the grid the game sorts its lights into (normally the PS4's 1920x1080; "use the version
+# that matches your window/fullscreen resolution, not the render resolution"). bbport.ini
+# light_grid (launcher: Graphics > Light grid):
+#   auto (default): the Steam Deck's 1280x800 grid when the output is 1280x800, where it is a
+#        tested speed-up (the shadPS4 Deck setup); the game's own grid at every other size (the
+#        larger grids cost more, the 1080p one is the game's own);
+#   off: the game's own grid; 1280x800, 1080p, 1440p, 4k: that grid whatever the output.
+# Not in a fingerprinted group (their sites would change the groups' fingerprints): applied with the
+# clean eboot only, as extra names are.
+LIGHT_GRIDS={'1280x800':'1280x800 Light Grid For SteamDeck (READ NOTES)',
+             '1080p':'1080p Light Grid (READ NOTES)',
+             '1440p':'1440p Light Grid (READ NOTES)',
+             '4k':'4k Light Grid (READ NOTES)'}
+LIGHT_GRID_AUTO={(1280,800):'1280x800'}
 
 
 def light_grid_patch(settings):
-    """The Light Grid patch for bbport.ini's output_res, None for other sizes or light_grid=0."""
-    if str(settings.get('light_grid','1')).strip()=='0':
-        return None
-    return LIGHT_GRIDS.get(chosen_output(settings))
+    """The Light Grid patch bbport.ini's light_grid and output_res ask for, None for the game's own."""
+    choice=str(settings.get('light_grid','auto')).strip().lower()
+    if choice in ('auto','1',''):
+        choice=LIGHT_GRID_AUTO.get(chosen_output(settings),'off')
+    return LIGHT_GRIDS.get(choice)
 
 
 def effect_patches(settings, production=None):

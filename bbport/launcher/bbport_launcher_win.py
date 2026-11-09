@@ -333,7 +333,7 @@ INI_FLOATS = {'sharpness', 'mouse_sensitivity'}  # written with two decimals
 INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'frame_generation': '0', 'show_fps': '1',
                 'frame_gen_provider': 'fsr3', 'frame_gen_multiplier': '2', 'frame_gen_fit_display': '1',
-                'output_res': '1920x1080', 'aspect_ratio': 'auto', 'model_lod': '0', 'map_3d': '0',
+                'output_res': '1920x1080', 'aspect_ratio': 'auto', 'light_grid': 'auto', 'model_lod': '0', 'map_3d': '0',
                 'live_resolution': 'auto', 'window_mode': 'windowed', 'hdr': '0', 'fast_shader_math': '0',
                 'button_icons': bbport_controls.ICON_DEFAULT, **bbport_controls.MOUSE_DEFAULTS,
                 **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS}}
@@ -545,6 +545,11 @@ def display_modes():
         except (AttributeError, OSError, ImportError):
             pass
     return _display_modes
+# LINUX_FORK: bbport.ini light_grid (scripts/patches.py LIGHT_GRIDS): the community Light Grid patches.
+LIGHT_GRID_CHOICES = [('auto', ('Auto (Steam Deck grid at 1280 × 800, else the game\'s own)',)),
+                      ('off', ("The game's own",)),
+                      ('1280x800', ('1280 × 800 (Steam Deck)',)), ('1080p', ('1920 × 1080',)),
+                      ('1440p', ('2560 × 1440',)), ('4k', ('3840 × 2160',))]
 LIVE = [('auto', ('Auto (by graphics card)', 'Авто (по видеокарте)')), ('0', ('Off (faster)', 'Выключена (быстрее)')),
         ('1', ('On (change without restarting)', 'Включена (без перезапуска)'))]
 LODS = [('0', ('As in the game', 'Как в игре')), ('-2', ('Highest (−2)', 'Максимальная (−2)')),
@@ -5337,6 +5342,11 @@ class Launcher:
                    'game restarts it). On: change output and preset in the game without a restart, at a cost.',
                    'Выкл.: разрешения кроме 1080p задаются патчем при запуске (быстрее). Вкл.: менять в игре '
                    'без перезапуска, но медленнее.'))
+        self.row(f, _('Light grid', 'Сетка освещения'), self.choice(f, 'light_grid', 'ini', LIGHT_GRID_CHOICES),
+                 _("The grid the game sorts its lights into (community Light Grid patches). A smaller one is "
+                   "faster; match it to the output. Auto: the Steam Deck's 1280 × 800 grid at that output, the "
+                   "game's own grid at any other. Set at start: after changing the output in the game, restart "
+                   "it. Lights missing or cut off near the screen's edges: choose the game's own.",))
         self.check(f, 'sharpen', 'ini', _('Sharpening (RCAS)', 'Резкость (RCAS)'))
         holder = self.tk.Frame(f, bg=CARD)
         Slider(self, holder, self.var('sharpness', 'ini'), 0.0, 2.0, 300).pack(side='left')
