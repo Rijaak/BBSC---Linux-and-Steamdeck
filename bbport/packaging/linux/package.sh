@@ -93,7 +93,7 @@ cp -a "$windows"/tools/. "$stage/tools/"
 for item in patches backend fsr4_shaders licenses launcher event-reference.json CREDITS.txt LICENSE README.md; do
     cp -a "$windows/$item" "$stage/"
 done
-cp -a packaging/linux/README-Linux.txt packaging/linux/run-game.sh "$stage/"
+cp -a packaging/linux/README-Linux.txt packaging/linux/KNOWN_ISSUES.md packaging/linux/run-game.sh "$stage/"
 chmod +x "$stage/run-game.sh"
 release=$(echo "$version" | cut -d. -f1-3)
 printf 'Yharnam Together: Bloodborne Seamless Co-op v%s (Linux, Bloodborne PC native port)\nLinux build %s\nBuilt: %s\nSource: https://github.com/Rijaak/BBSC---Linux-and-Steamdeck\n' \

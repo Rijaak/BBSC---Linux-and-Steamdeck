@@ -154,6 +154,15 @@ def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
     vdf_path.parent.mkdir(parents=True, exist_ok=True)
     partial = vdf_path.with_name(vdf_path.name + '.tmp')
     partial.write_bytes(out)
+    # LINUX_FORK: the new file keeps the old one's permissions. NonSteamLaunchers' scanner
+    # (NSLGameScanner.py) empties a shortcuts.vdf that is not executable and keeps only its own
+    # entries: a Steam Deck's 40 shortcuts went down to 1-2 after Add to Steam wrote a 644 file over
+    # its 755 one (2026-11-09).
+    if data:
+        try:
+            os.chmod(partial, vdf_path.stat().st_mode & 0o7777)
+        except OSError:
+            pass
     os.replace(partial, vdf_path)
     return result
 
