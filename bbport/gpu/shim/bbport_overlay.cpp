@@ -8243,6 +8243,20 @@ bool HandleEvent(const SDL_Event& event) {
     }
 }
 
+// LINUX_FORK: the menus' letterbox (Render) draws while no save is loaded on an output that is not
+// 16:9 (the last frame's game rectangle: set before the next frame's check).
+float last_game_aspect = 16.0f / 9.0f;
+bool MenuLetterboxOn() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_MENU_LETTERBOX");
+        return !(env && env[0] == '0');
+    }();
+    return on;
+}
+bool MenuLetterboxWanted() {
+    return MenuLetterboxOn() && std::abs(last_game_aspect - 16.0f / 9.0f) > 0.01f && bbcoop_player_in_world() == 0;
+}
+
 bool Visible() {
     // Kaniel 2026-10-25: the free camera's setting, every frame (switched off: back at once).
     bbcoop_set_free_camera(BbSettings::Get().free_camera ? 1 : 0);
@@ -8286,7 +8300,8 @@ bool Visible() {
     }
     return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party || compass ||
                            pings || skip_vote || invasion || rot || team_travel || Team::open ||
-                           Joining::open || Map::open || FreeCamera::flying || ScriptedKeysWaiting());
+                           Joining::open || Map::open || FreeCamera::flying || ScriptedKeysWaiting() ||
+                           MenuLetterboxWanted());
 }
 
 bool MenuOpen() {
@@ -8385,6 +8400,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         std::scoped_lock lock{imgui_mutex};
         ScriptedKeys();
     }
+    if (game.extent.width > 0 && game.extent.height > 0) {
+        last_game_aspect = float(game.extent.width) / float(game.extent.height);
+    }
     if (!Visible()) {
         return;
     }
@@ -8435,6 +8453,31 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     if (const int textures = ImGui::GetPlatformIO().Textures.Size; textures != textures_logged) {
         textures_logged = textures;
         std::printf("Overlay: %d textures, pool of %d sets\n", textures, OverlayDescriptorSets);
+    }
+    // LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): with no save loaded (the title screen, its menus,
+    // loading screens) on an output that is not 16:9, black bars cover what lies past the game's own
+    // 16:9 screen, as a 16:9 game shows on a 16:10 or 21:9 display. The UI movies take the output's
+    // shape (so in the game the HUD sits at the edges), and on the title that showed art never meant
+    // to be seen (a grey wedge under the menu on a Steam Deck, 2026-11-09). Drawn first, on the
+    // background list: the port's own windows stay over it. BB_MENU_LETTERBOX=0: none.
+    {
+        const bool letterbox = MenuLetterboxOn();
+        const float gx = float(game.offset.x), gy = float(game.offset.y);
+        const float gw = float(game.extent.width), gh = float(game.extent.height);
+        if (letterbox && gw > 0 && gh > 0 && std::abs(gw / gh - 16.0f / 9.0f) > 0.01f &&
+            bbcoop_player_in_world() == 0) {
+            ImDrawList* bars = ImGui::GetBackgroundDrawList();
+            const ImU32 black = IM_COL32(0, 0, 0, 255);
+            if (gw / gh < 16.0f / 9.0f) { // taller (16:10, 4:3): bars above and below
+                const float bar = std::floor((gh - gw * 9.0f / 16.0f) * 0.5f);
+                bars->AddRectFilled(ImVec2(gx, gy), ImVec2(gx + gw, gy + bar), black);
+                bars->AddRectFilled(ImVec2(gx, gy + gh - bar), ImVec2(gx + gw, gy + gh), black);
+            } else { // wider (21:9, 32:9): bars at the sides
+                const float bar = std::floor((gw - gh * 16.0f / 9.0f) * 0.5f);
+                bars->AddRectFilled(ImVec2(gx, gy), ImVec2(gx + bar, gy + gh), black);
+                bars->AddRectFilled(ImVec2(gx + gw - bar, gy), ImVec2(gx + gw, gy + gh), black);
+            }
+        }
     }
     if (Party::shown && !menu_open) {
         Party::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
