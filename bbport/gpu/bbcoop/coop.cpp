@@ -144,6 +144,16 @@ extern "C" void bbcoop_install(unsigned char* image, uint64_t eboot_size, void* 
     CoopDiscord::StartDiscordStatus();
 }
 
+namespace Core::Bloodborne::Coop {
+u64 GetLocalPlayer();
+}
+
+// LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): whether a save is loaded (the game's own pointer to
+// its player character): 0 on the title screen, its menus and loading screens.
+extern "C" int bbcoop_player_in_world(void) {
+    return Core::Bloodborne::Coop::GetLocalPlayer() >= 0x10000 ? 1 : 0;
+}
+
 extern "C" void bbcoop_crash_report(void* exception_pointers) {
     Core::Bloodborne::WriteCrashReport(exception_pointers);
 }
