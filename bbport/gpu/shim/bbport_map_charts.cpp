@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <deque>
 #include <filesystem>
+#include <cctype>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -281,15 +282,45 @@ std::string AreaName(std::int32_t name_id) {
 // area's map picture and 3D view drawn ahead into the saves folder (bb-probe --prepare-map, which
 // the launcher runs with a progress bar), skipping what is drawn already. Prints a line an area
 // ("Map prepare: 3/24 m24_01_00_00"); 0 when done, 1 when the game's files are not there.
+// LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): `relative` under `root` as the game's files spell it,
+// whatever the case (map/MapStudio, map/mapstudio, …): a dump keeps the PS4's names and Windows
+// ignores case, Linux does not. Each part is taken as it is when it exists, else the folder's
+// entry equal to it ignoring case; the path as given when none is.
+static std::filesystem::path ResolveIgnoringCase(const std::filesystem::path& root, const std::string& relative) {
+    std::filesystem::path at = root;
+    for (const auto& part : std::filesystem::path(relative)) {
+        std::error_code error;
+        if (std::filesystem::exists(at / part, error)) {
+            at /= part;
+            continue;
+        }
+        std::string want = part.string();
+        std::transform(want.begin(), want.end(), want.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        std::filesystem::path found;
+        for (const auto& entry : std::filesystem::directory_iterator(at, error)) {
+            std::string name = entry.path().filename().string();
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+            if (name == want) {
+                found = entry.path();
+                break;
+            }
+        }
+        at = found.empty() ? at / part : found;
+    }
+    return at;
+}
+
 extern "C" int bbport_prepare_map(const char* dvdroot, const char* user_dir) {
     const std::filesystem::path root = std::filesystem::u8path(dvdroot);
     std::vector<std::uint32_t> areas;
     std::error_code error;
-    for (const auto& entry : std::filesystem::directory_iterator(root / "map" / "MapStudio", error)) {
+    for (const auto& entry : std::filesystem::directory_iterator(ResolveIgnoringCase(root, "map/MapStudio"), error)) {
         // mAA_BB_00_00.msb.dcx: one area; the others (_00_01, …) are its variants.
         const std::string name = entry.path().filename().string();
         unsigned aa = 0, bb = 0;
-        if (name.size() == 20 && name.ends_with("_00_00.msb.dcx") && std::sscanf(name.c_str(), "m%2u_%2u", &aa, &bb) == 2) {
+        std::string lower = name;  // LINUX_FORK: M24_01_00_00.MSB.DCX as well
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        if (lower.size() == 20 && lower.ends_with("_00_00.msb.dcx") && std::sscanf(lower.c_str(), "m%2u_%2u", &aa, &bb) == 2) {
             areas.push_back(aa << 24 | bb << 16);
         }
     }
@@ -303,9 +334,9 @@ extern "C" int bbport_prepare_map(const char* dvdroot, const char* user_dir) {
 #else
     setenv("BB_GPU_USER_DIR", user_dir, 1);
 #endif
-    const BbMapArt::ReadFile read = [&](const std::string& relative) { return ReadFile(root / relative); };
+    const BbMapArt::ReadFile read = [&](const std::string& relative) { return ReadFile(ResolveIgnoringCase(root, relative)); };
     const BbMapArt::ReadRange read_range = [&](const std::string& relative, std::uint64_t offset, std::uint64_t size) {
-        std::ifstream file(root / relative, std::ios::binary);
+        std::ifstream file(ResolveIgnoringCase(root, relative), std::ios::binary);
         std::vector<std::uint8_t> bytes(size);
         file.seekg(std::streamoff(offset));
         file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(size));
