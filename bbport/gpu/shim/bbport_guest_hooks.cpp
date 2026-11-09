@@ -3,7 +3,6 @@
 #include "bbport_guest_hooks.h"
 #include "bbport_heap_sites.h"
 #include "bbport_toggles.h"
-#include "../bbcoop.h"
 
 #include <array>
 #include <atomic>
@@ -1434,29 +1433,6 @@ GUEST_ABI void ViewportAdjust(u64 movie, u64 viewport, u64 caller) {
     if (v[0] == 1920 && v[1] == 1080 && v[2] == 0 && v[3] == 0 && v[4] == 1920 && v[5] == 1080) {
         const float aspect = gfx_pixel_aspect.load(std::memory_order_relaxed);
         std::memcpy(v + 12, &aspect, 4);
-        // LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): with no save loaded (the title screen, its
-        // menus, loading screens) the movie is clipped to the game's own 16:9 screen, as a 16:9 game
-        // shows on a 16:10 or 21:9 display: the title's art past its 16:9 screen (a grey wedge under
-        // the menu on a Steam Deck, 2026-11-09) was never meant to be seen. In the game the HUD keeps
-        // the whole output (its groups at the edges). The scissor rectangle is in the 1920x1080 frame
-        // the output stretches: a taller output shows the screen across the width and `aspect` of the
-        // height, a wider one across the height and 1 / `aspect` of the width.
-        static const bool letterbox = [] { // BB_MENU_LETTERBOX=0: the menus as 1.4.0 has them
-            const char* env = std::getenv("BB_MENU_LETTERBOX");
-            return !(env && env[0] == '0');
-        }();
-        if (letterbox && std::abs(aspect - 1.0f) > 0.001f && bbcoop_player_in_world() == 0) {
-            std::int32_t left = 0, top = 0, width = 1920, height = 1080;
-            if (aspect < 1.0f) {
-                height = std::int32_t(std::lround(1080.0f * aspect));
-                top = (1080 - height) / 2;
-            } else {
-                width = std::int32_t(std::lround(1920.0f / aspect));
-                left = (1920 - width) / 2;
-            }
-            v[6] = left, v[7] = top, v[8] = width, v[9] = height;
-            v[10] |= 4; // Viewport::View_UseScissorRect
-        }
     }
 }
 
