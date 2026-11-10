@@ -34,9 +34,9 @@ STEAM DECK SETTINGS
   General
     Output              1280 x 800 (16:10)   The Deck's own screen: nothing is scaled twice, and the
                                              HUD sits at the screen's edges.
-    Frame rate          30 FPS (as on PS4)   What the Deck holds steadily; 60 is recommended in co-op
-                                             but the Deck rarely keeps it. Mixed frame rates in a
-                                             team work (the game sends its state at each one's rate).
+    Frame rate          30 FPS (as on PS4)   For solo play: what the Deck holds steadily. In co-op the
+                                             game runs at 60 whatever you choose. To keep 30 in
+                                             co-op, use Unlocked with Frame cap 30 (experimental).
     Upscaler            FSR 3.1              FSR 4 is slow on the Deck's GPU (no INT8 dot products).
     Preset              Native AA (x1.0)     Draws at 1280x800, as the shadPS4 setup did; FSR 3.1
                                              only smooths edges. Not holding 30: Quality (x1.5,
