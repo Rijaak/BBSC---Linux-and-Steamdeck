@@ -45,7 +45,9 @@ the full co-op log).
 
 On the public server co-op runs the game's fixed 60 FPS step whatever the Frame rate setting says
 (30 included), so all players move at the same speed; a Steam Deck does not hold 60 everywhere.
-Display & FPS: Frame rate Unlocked with Frame cap 30 keeps 30 in co-op (the launcher's experimental
+Settings > Display & FPS: Frame rate Unlocked with Frame cap (unlocked mode) 30 FPS keeps 30 in co-op
+(30 is in the launcher's list after 1.4.0.1; in 1.4.0.1 choose 30 in the game's own menu, its FPS limit
+row, while running Unlocked: the game keeps it in bbport.ini) (the launcher's experimental
 unlocked co-op; not yet tested in a team).
 
 ## Upstream tests that fail on Linux

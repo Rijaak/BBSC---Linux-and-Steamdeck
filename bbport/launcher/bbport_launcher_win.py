@@ -603,7 +603,7 @@ READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), (
 # Frame cap of the unlocked mode (BB_FPS_LIMIT), Advanced only. '' is Auto: no cap while frame
 # generation is off, half the display refresh (at most 120) while it is on (see game_environment).
 # The caps above 120 carry the warning mark: the game's movement timing breaks above about 120 FPS.
-FRAME_CAPS = [('', ('Auto', 'Авто')),
+FRAME_CAPS = [('', ('Auto', 'Авто')), ('30', ('30 FPS',)),
               ('60', ('60 FPS',)), ('90', ('90 FPS',)), ('120', ('120 FPS',)), ('144', ('144 FPS  ⚠',)),
               ('165', ('165 FPS  ⚠',)), ('240', ('240 FPS  ⚠',)), ('0', ('No limit  ⚠', 'Без ограничения  ⚠'))]
 
@@ -4050,11 +4050,12 @@ class Launcher:
             return
         self.root.after_idle(lambda: self.messagebox.showwarning(
             _('Frame rate in co-op', 'Частота кадров в кооперативе'),
-            _('Above 60 FPS in co-op is still in testing. Unlocked goes up to 120 FPS and 90 FPS up to 90; '
-              'your game still sends its updates to the team as often as at 60.\n\n'
+            _('Unlocked and 90 FPS in co-op are still in testing. Unlocked goes up to 120 FPS, or to the frame cap '
+              'below (30 FPS suits a Steam Deck), and 90 FPS up to 90; your game still sends its updates to the '
+              'team as often as at 60.\n\n'
               'If you or your team see enemies or players lag, set the frame rate back to 60 FPS.',
-              'Больше 60 FPS в кооперативе — пока в тестировании. «Без ограничения» — до 120 FPS, 90 FPS — '
-              'до 90; игра по-прежнему отправляет обновления команде так же часто, как при 60.\n\n'
+              '«Без ограничения» и 90 FPS в кооперативе — пока в тестировании. «Без ограничения» — до 120 FPS '
+              'или до ограничения FPS ниже (30 FPS подходит для Steam Deck), 90 FPS — до 90; игра по-прежнему отправляет обновления команде так же часто, как при 60.\n\n'
               'Если у вас или у команды лагают враги или игроки, верните 60 FPS.')))
 
     def build_coop_popup(self):
