@@ -27,6 +27,9 @@ void bbcoop_crash_report(void *exception_pointers);
  * its menus and loading screens. */
 int bbcoop_player_in_world(void);
 
+/* LINUX_FORK: 1 while the game's cutscene player plays a cutscene (alone or in a party). */
+int bbcoop_cutscene_playing(void);
+
 /* The window is closing: a game whose thread has stopped ticking writes a freeze report
  * (user/log/freeze-*.txt and .dmp) first. */
 void bbcoop_window_closing(void);

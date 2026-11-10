@@ -8243,7 +8243,7 @@ bool HandleEvent(const SDL_Event& event) {
     }
 }
 
-// LINUX_FORK: the menus' letterbox (Render) draws while no save is loaded. The presenter asks
+// LINUX_FORK: the menus' letterbox (Render) draws while no save is loaded or a cutscene plays. The presenter asks
 // Visible() before Render runs, so this cannot wait for Render's rectangle: it asks for the overlay on
 // every frame without a save, and Render draws bars only where the output is not 16:9 (an empty
 // overlay frame on a 16:9 title screen otherwise). Its changes go to the log.
@@ -8258,13 +8258,16 @@ bool MenuLetterboxWanted() {
     if (!MenuLetterboxOn()) {
         return false;
     }
-    const bool wanted = bbcoop_player_in_world() == 0;
+    // No save loaded (the title, its menus, loading screens), or a cutscene playing.
+    const int state = bbcoop_player_in_world() == 0 ? 1 : bbcoop_cutscene_playing() != 0 ? 2 : 0;
     static int logged = -1;
-    if (int(wanted) != logged) {
-        logged = int(wanted);
-        std::printf("Overlay: menu letterbox %s\n", wanted ? "on (no save loaded)" : "off (in the game)");
+    if (state != logged) {
+        logged = state;
+        std::printf("Overlay: letterbox %s\n", state == 1   ? "on (no save loaded)"
+                                                : state == 2 ? "on (cutscene)"
+                                                             : "off (in the game)");
     }
-    return wanted;
+    return state != 0;
 }
 
 bool Visible() {
