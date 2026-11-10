@@ -5379,41 +5379,7 @@ class Launcher:
         failed, note, root = None, '', None
         try:
             self.coop_firewall()
-            # Kaniel 2026-10-25: the saves as this session finds them, to come back to (Restore saves).
-            try:
-                bbport_coop.back_up_saves(PORT_DIR, 'before PLAY')
-            except OSError:
-                pass  # a full disk or a locked file costs this one copy, not the game
-            # No account step (phase 11): the host's server makes the player's account at its first
-            # sign-in, and the game's team screen says when it cannot reach the server.
-            root = bbport_coop.view_root(PORT_DIR)
-            if bbport_coop.needs_prepare(PORT_DIR, settings):
-                root, note = bbport_coop.prepare(PORT_DIR, settings, say=lambda text: self.coop_say(_(text)))
-                settings['prepared'] = bbport_coop.prepared_key(settings)
-                self.coop['prepared'] = settings['prepared']
-                bbport_coop.save_settings(PORT_DIR, self.coop)
-            else:
-                bbport_coop.copy_events(PORT_DIR, root)
-            # A public server's name is looked up once: the link and the HTTP ports go to its address,
-            # as to a host's IP.
-            # A region's directory (https://...) names the shard: the least loaded, or the player's own
-            # (docs/SCALING.md); the shards send the game on by themselves later.
-            if settings.get('server_type') == 'global':
-                settings = bbport_coop.global_game_settings(settings)
-            elif bbport_coop.region_url(settings['host_ip']):
-                settings = bbport_coop.region_settings(settings)
-            else:
-                address = bbport_coop.resolve_host(settings['host_ip'])
-                if not address:
-                    raise RuntimeError(_(bbport_coop.UNKNOWN_SERVER_TEXT).format(settings['host_ip']))
-                # The id for this server: its own when it refused the player's one id (coop_watch_line).
-                account, secret = bbport_coop.player_id_for(settings, settings['host_ip'])
-                settings = dict(settings, host_ip=address, server=settings['host_ip'], account=account,
-                                password=secret, link_key=bbport_coop.link_key_for(settings, settings['host_ip']))
-            user = PORT_DIR / 'user'
-            user.mkdir(parents=True, exist_ok=True)
-            (user / 'host_overrides.custom.json').write_text(bbport_coop.host_overrides(settings['host_ip']),
-                                                              encoding='utf-8')
+            settings, root, note = coop_prepare(settings, self.coop, say=self.coop_say)
         except (RuntimeError, OSError, ValueError) as error:
             failed = str(error)
         except Exception as error:  # noqa: BLE001 - 2026-11-05: any other error left PLAY spinning for good
@@ -7713,10 +7679,75 @@ class GameJob:
             self.handle = None
 
 
+def coop_prepare(settings, coop, say=print):
+    """The co-op game's settings and game folder view, as PLAY makes them (coop_prepare_and_play):
+    the saves backed up, the game folder prepared (or the event files refreshed), the server looked up,
+    host_overrides written. Returns (played settings, root, note); raises RuntimeError, OSError or
+    ValueError when co-op cannot start. COOP is coop.json's settings (saved when the preparation is new).
+    LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): shared with --play, which started the game without
+    co-op on a co-op install (the Steam shortcut, Bloodborne.exe): the party HUD's placeholders showed."""
+    played, note = dict(bbport_coop.played_settings(coop)), ''
+    # Kaniel 2026-10-25: the saves as this session finds them, to come back to (Restore saves).
+    try:
+        bbport_coop.back_up_saves(PORT_DIR, 'before PLAY')
+    except OSError:
+        pass  # a full disk or a locked file costs this one copy, not the game
+    root = bbport_coop.view_root(PORT_DIR)
+    if bbport_coop.needs_prepare(PORT_DIR, played):
+        root, note = bbport_coop.prepare(PORT_DIR, played, say=lambda text: say(_(text)))
+        played['prepared'] = bbport_coop.prepared_key(played)
+        coop['prepared'] = played['prepared']
+        bbport_coop.save_settings(PORT_DIR, coop)
+    else:
+        bbport_coop.copy_events(PORT_DIR, root)
+    # A public server's name is looked up once: the link and the HTTP ports go to its address, as to a
+    # host's IP. A region's directory (https://...) names the shard (docs/SCALING.md).
+    if played.get('server_type') == 'global':
+        played = bbport_coop.global_game_settings(played)
+    elif bbport_coop.region_url(played['host_ip']):
+        played = bbport_coop.region_settings(played)
+    else:
+        address = bbport_coop.resolve_host(played['host_ip'])
+        if not address:
+            raise RuntimeError(_(bbport_coop.UNKNOWN_SERVER_TEXT).format(played['host_ip']))
+        # The id for this server: its own when it refused the player's one id (coop_watch_line).
+        account, secret = bbport_coop.player_id_for(played, played['host_ip'])
+        played = dict(played, host_ip=address, server=played['host_ip'], account=account,
+                      password=secret, link_key=bbport_coop.link_key_for(played, played['host_ip']))
+    user = PORT_DIR / 'user'
+    user.mkdir(parents=True, exist_ok=True)
+    (user / 'host_overrides.custom.json').write_text(bbport_coop.host_overrides(played['host_ip']),
+                                                      encoding='utf-8')
+    return played, root, note
+
+
+def coop_play_without_window(settings):
+    """--play on a co-op install: co-op as PLAY starts it (coop_prepare, then bbport_coop's game
+    environment), the game's output in user/log/console.txt as from PLAY. Returns the game's exit code;
+    None when co-op is not set up yet (the launcher opens instead)."""
+    coop = bbport_coop.load_settings(PORT_DIR)
+    if bbport_coop.missing(coop):
+        return None
+    try:
+        played, root, _note = coop_prepare(settings, coop)
+    except (RuntimeError, OSError, ValueError) as error:
+        print(f'Co-op could not start: {error}', file=sys.stderr)
+        return 1
+    played = dict(played, unlocked_fps='1' if bbport_coop.unlocked_fps(settings.get('fps_mode')) else '')
+    env = bbport_coop.game_environment(game_environment(settings), played, PORT_DIR, root)
+    log_path = bbport_coop.rotate_logs(PORT_DIR)
+    threading.Thread(target=bbport_coop.send_reports, args=(PORT_DIR, dict(played)), daemon=True).start()
+    return start_game(run_command(), env, log_path).wait()
+
+
 def play_without_window(settings):
     """--play: the game with the saved settings (shortcuts, Steam). Output goes to the console
     when there is one and to <saves folder>/last_run.log."""
     attach_stdio()
+    if COOP_INSTALL:
+        code = coop_play_without_window(settings)
+        if code is not None:
+            return code
     log_dir = Path(settings.get('user_dir') or DATA_DIR / 'user')
     log_dir.mkdir(parents=True, exist_ok=True)
     with open(log_dir / 'last_run.log', 'w', encoding='utf-8', buffering=1) as log:
