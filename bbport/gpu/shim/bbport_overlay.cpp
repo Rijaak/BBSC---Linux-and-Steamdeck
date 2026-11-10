@@ -8345,9 +8345,10 @@ bool HandleEvent(const SDL_Event& event) {
     }
 }
 
-// LINUX_FORK: the menus' letterbox (Render) draws while no save is loaded on an output that is not
-// 16:9 (the last frame's game rectangle: set before the next frame's check).
-float last_game_aspect = 16.0f / 9.0f;
+// LINUX_FORK: the menus' letterbox (Render) draws while no save is loaded. The presenter asks
+// Visible() before Render runs, so this cannot wait for Render's rectangle: it asks for the overlay on
+// every frame without a save, and Render draws bars only where the output is not 16:9 (an empty
+// overlay frame on a 16:9 title screen otherwise). Its changes go to the log.
 bool MenuLetterboxOn() {
     static const bool on = [] {
         const char* env = std::getenv("BB_MENU_LETTERBOX");
@@ -8356,7 +8357,16 @@ bool MenuLetterboxOn() {
     return on;
 }
 bool MenuLetterboxWanted() {
-    return MenuLetterboxOn() && std::abs(last_game_aspect - 16.0f / 9.0f) > 0.01f && bbcoop_player_in_world() == 0;
+    if (!MenuLetterboxOn()) {
+        return false;
+    }
+    const bool wanted = bbcoop_player_in_world() == 0;
+    static int logged = -1;
+    if (int(wanted) != logged) {
+        logged = int(wanted);
+        std::printf("Overlay: menu letterbox %s\n", wanted ? "on (no save loaded)" : "off (in the game)");
+    }
+    return wanted;
 }
 
 bool Visible() {
@@ -8502,9 +8512,6 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         std::scoped_lock lock{imgui_mutex};
         ScriptedKeys();
     }
-    if (game.extent.width > 0 && game.extent.height > 0) {
-        last_game_aspect = float(game.extent.width) / float(game.extent.height);
-    }
     if (!Visible()) {
         return;
     }
@@ -8567,7 +8574,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         const float gx = float(game.offset.x), gy = float(game.offset.y);
         const float gw = float(game.extent.width), gh = float(game.extent.height);
         if (letterbox && gw > 0 && gh > 0 && std::abs(gw / gh - 16.0f / 9.0f) > 0.01f &&
-            bbcoop_player_in_world() == 0) {
+            MenuLetterboxWanted()) {
             ImDrawList* bars = ImGui::GetBackgroundDrawList();
             const ImU32 black = IM_COL32(0, 0, 0, 255);
             if (gw / gh < 16.0f / 9.0f) { // taller (16:10, 4:3): bars above and below
