@@ -146,6 +146,12 @@ extern "C" void bbcoop_install(unsigned char* image, uint64_t eboot_size, void* 
 
 namespace Core::Bloodborne::Coop {
 u64 GetLocalPlayer();
+bool CutscenePlaying();
+}
+
+// LINUX_FORK: 1 while the game's cutscene player plays a cutscene.
+extern "C" int bbcoop_cutscene_playing(void) {
+    return Core::Bloodborne::Coop::CutscenePlaying() ? 1 : 0;
 }
 
 // LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): whether a save is loaded (the game's own pointer to
