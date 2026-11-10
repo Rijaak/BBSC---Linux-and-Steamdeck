@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 from struct import error as struct_error
@@ -684,14 +685,10 @@ def main():
         if env.get('BB_ONLINE') == '1':
             online_overrides(env, user_dir)
         this = ['--run'] if getattr(sys, 'frozen', False) else [str(Path(__file__).resolve())]
-        if IS_WINDOWS:
-            restart = [sys.executable, *this, '--after', str(os.getpid()), *args]
-            env['BB_RESTART_COMMAND'] = subprocess.list2cmdline(restart)
-        else:
-            # The game execs this shell command in its own process (src/probe.c): same process id,
-            # so nothing to wait for; the working folder is the game's, so the paths are absolute.
-            import shlex
-            env['BB_RESTART_COMMAND'] = shlex.join([sys.executable, *this, *args])
+        restart = [sys.executable, *this, '--after', str(os.getpid()), *args]
+        # The game runs it through cmd's rules on Windows (CreateProcess), through sh elsewhere.
+        env['BB_RESTART_COMMAND'] = (subprocess.list2cmdline(restart) if sys.platform == 'win32'
+                                     else shlex.join(restart))
         command = [str(probe), str(out / 'boot-linked.bin'), '--content-profile', str(out / 'content.bin'),
                    '--patches', str(out / 'patches.bin'), '--app0', str(game),
                    '--user', str(user_dir),
