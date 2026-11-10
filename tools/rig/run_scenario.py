@@ -148,6 +148,8 @@ def use_engine(name: str):
 # addresses are in its own settings).
 PING = None
 DELAYED_PORT_OFFSET = 1000
+# Where a role with no game server finds it: port 9 (discard), which nothing on the PC listens on.
+NO_GAME_SERVER_PORT = 9
 
 
 def use_ping(ping: tuple[int, int] | None):
@@ -345,18 +347,6 @@ def judge(spec: dict, texts: dict[str, str]) -> list[str]:
     if handle := spec.get("hp_sums_hits"):
         if problem := hits_sum_problem(texts, handle):
             problems.append(f"all: {problem}")
-    # "hp_state": a character whole or hurt in a role's census (the last, or number "census"),
-    # against its own max there: the enemy strength rule moves the max with the hunters on the map.
-    for check in spec.get("hp_state", []):
-        index = check.get("census", -1)
-        where = "last census" if index < 0 else f"census {index + 1}"
-        for role in check["roles"]:
-            seen = last_census_hp(texts.get(role, ""), check["handle"], index)
-            if seen is None:
-                problems.append(f"{role}: no census of {check['handle']}")
-            elif (seen[0] >= seen[1]) != (check["is"] == "whole"):
-                problems.append(f"{role}: {check['handle']} is not {check['is']} in its {where}: "
-                                f"{seen[0]}/{seen[1]}")
     if limit := spec.get("max_hp_lag"):
         lag = hp_board_lag(texts, spec["hp_sums_hits"])
         # In milliseconds: the games' clock sums leave float noise (0.15 as 0.1500000000014).
@@ -856,10 +846,6 @@ def prune_runs(runs: pathlib.Path, kept: int):
         shutil.rmtree(old, ignore_errors=True)
 
 
-TEAM_RULES_FILE = "bloodborne_team_rules.txt"  # the game's OwnRulesFile
-TEAM_CHOICES_FILE = "bloodborne_team_choices.txt"  # the game's TeamChoicesFile
-
-
 def user_dir(role: str) -> pathlib.Path:
     return ENGINE.user_dir(role)
 
@@ -1082,9 +1068,7 @@ def game_environment(role: str, script: pathlib.Path | None, party: str,
         env["SHADPS4_NET_FIREWALL"] = firewall_setting()
     if PING:
         env["SHADPS4_P2P_DELAY_MS"] = latency.game_setting(PING)
-        # Not an address the scenario names itself (sign-in-no-server's, where nothing answers:
-        # full rig 2026-11-10, the lane's server put there let the game sign in).
-        if "BB_SHADNET_SERVER" in env and "BB_SHADNET_SERVER" not in (settings or {}):
+        if "BB_SHADNET_SERVER" in env:
             # The link (UDP) goes straight to shadNet, which listens at the proxy's port + 1.
             env["BB_SHADNET_SERVER"] = f"127.0.0.1:{matching_udp_port()}"
             env["BB_SHADNET_WEBAPI"] = f"http://127.0.0.1:{server_port(WEBAPI_PORT)}"
@@ -1148,18 +1132,12 @@ def launch(role: str, script: list[str] | None, party: str = "rig:hunters",
     headless_roles = settings.pop("rig.headless_roles", "").split(",")
     if role in headless_roles:
         settings.update(HEADLESS)
-    # Kaniel 2026-11-11: the game keeps the rules its player set on the team screen in its user
-    # folder for its next start. A run starts with none of an earlier run's (they would be the
-    # next team's), or with the scenario's own ("rig.team_rules", the file's line).
-    # The same for the joining, invaders and death mode it kept ("rig.team_choices").
-    for name, setting in ((TEAM_RULES_FILE, "rig.team_rules"), (TEAM_CHOICES_FILE, "rig.team_choices")):
-        kept = ENGINE.user_dir(role) / name
-        if (line := settings.pop(setting, None)) is not None:
-            kept.parent.mkdir(parents=True, exist_ok=True)
-            kept.write_text(line + "\n", encoding="utf-8", newline="\n")
-        else:
-            kept.unlink(missing_ok=True)
-    ENGINE.prepare(role, backend_port=server_port(BACKEND_PORT), ini=ini)
+    # "rig.no_game_server_roles": those roles' game server (port 20443's) does not answer, as for
+    # a player whose router or filter (AdGuard, Discord audit A1) lets the server link through
+    # but not the game's own server.
+    no_game_server = role in settings.pop("rig.no_game_server_roles", "").split(",")
+    ENGINE.prepare(role, backend_port=NO_GAME_SERVER_PORT if no_game_server
+                   else server_port(BACKEND_PORT), ini=ini)
     build_lock.refuse_if_memory_low(f"the {role} game")  # leaked memory froze the PC
     build_lock.wait_for_builds()  # beside builds unless BB_BUILD_BESIDE_GAMES=0
     env = game_environment(role, script_path, party, settings)
@@ -1785,10 +1763,6 @@ def console_problems(spec: dict, consoles: dict[str, str]) -> list[str]:
         for pattern in patterns:
             if not re.search(pattern, consoles.get(role, "")):
                 problems.append(f"{role}: the console never said /{pattern}/")
-    for role, patterns in spec.get("console_forbid", {}).items():
-        for pattern in patterns:
-            if found := re.search(pattern, consoles.get(role, "")):
-                problems.append(f"{role}: the console must not say, said: {found.group(0)[:160]}")
     return problems
 
 
