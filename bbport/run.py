@@ -384,7 +384,8 @@ def glibcxx_level(library):
 
 def system_libstdcxx():
     try:
-        out = subprocess.run(['/sbin/ldconfig', '-p'], capture_output=True, text=True, timeout=10).stdout
+        out = subprocess.run(['/sbin/ldconfig', '-p'], capture_output=True, text=True, encoding='utf-8',
+                             errors='replace', timeout=10).stdout
     except (OSError, subprocess.TimeoutExpired):
         out = ''
     for line in out.splitlines():

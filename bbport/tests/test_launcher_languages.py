@@ -17,6 +17,7 @@ WARN = '  \u26a0'  # the launcher's mark of a risky choice; the text before it i
 SAME_EVERYWHERE = {
     'FSR 4', 'DLSS', 'HDR', 'FPS', 'V-Sync', 'DLSS (NVIDIA GeForce RTX)', 'Native AA (\xd71.0)',
     'Quality (\xd71.5)', 'Balanced (\xd71.7)', 'Performance (\xd72)', 'Ultra Performance (\xd73)',
+    '30 FPS', '1280 × 800 (Steam Deck)', '1920 × 1080', '2560 × 1440', '3840 × 2160',  # LINUX_FORK
     '60 FPS', '90 FPS', '120 FPS', '144 FPS', '165 FPS', '240 FPS', '2', '2\xd7',
     '3\xd7 (DLSS, GeForce RTX 50)', '4\xd7 (DLSS, GeForce RTX 50)', 'FIFO (VSync)', 'FIFO Relaxed',
     'English (UK)', 'Fran\xe7ais', 'Espa\xf1ol', 'Espa\xf1ol (Latinoam\xe9rica)', 'Deutsch', 'Italiano',

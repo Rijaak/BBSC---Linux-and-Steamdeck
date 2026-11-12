@@ -2083,8 +2083,8 @@ def firewall_commands(install, host):
 
 def firewall_ready(install, host):
     """Whether this install's rules are there (reading rules needs no administrator)."""
-    if not IS_WINDOWS:
-        return True  # Linux desktops and SteamOS have no firewall in the way by default
+    if sys.platform != 'win32':  # Linux desktops and SteamOS have no firewall in the way by default
+        return True
     probe = str(Path(install) / 'bin' / 'bb-probe.exe').lower()
     names = [RULE_GAME] + ([RULE_HOST_TCP, RULE_HOST_UDP] if host else [])
     for name in names:
@@ -2120,8 +2120,7 @@ SETUP_SUFFIX = '-setup.exe'
 # check looks at the Linux build's releases: a Linux tarball and its .sha256, opened in the browser to
 # install by hand (no setup .exe to run).
 LINUX_RELEASES_API = 'https://api.github.com/repos/Rijaak/BBSC---Linux-and-Steamdeck/releases?per_page=100'
-if not IS_WINDOWS:
-    SETUP_SUFFIX = '-linux.tar.gz'
+LINUX_SETUP_SUFFIX = '-linux.tar.gz'
 
 
 def version_key(version):
@@ -2135,7 +2134,7 @@ def version_key(version):
     return numbers, 0 if match.group(2) else 1, match.group(2) or ''
 
 
-def newest_release(releases):
+def newest_release(releases, suffix=SETUP_SUFFIX):
     """The newest release in GitHub's /releases list that carries a setup .exe and its sum, pre-releases
     included and drafts never: {'version', 'setup', 'sha256', 'page', 'notes'}, or None."""
     if not isinstance(releases, list):
@@ -2149,7 +2148,7 @@ def newest_release(releases):
             continue
         assets = {asset.get('name'): asset.get('browser_download_url') for asset in release.get('assets') or []
                   if isinstance(asset, dict) and isinstance(asset.get('name'), str)}
-        setup = next((name for name in assets if name.endswith(SETUP_SUFFIX)), None)
+        setup = next((name for name in assets if name.endswith(suffix)), None)
         if not setup or not assets.get(setup + '.sha256'):
             continue
         if best is None or version_key(version) > version_key(best['version']):
@@ -2169,7 +2168,9 @@ def fetch_releases(timeout=15, api=RELEASES_API):
 
 def fetch_newest_release(timeout=15):
     """newest_release() of what GitHub lists now (raises OSError or ValueError when it cannot be read)."""
-    return newest_release(fetch_releases(timeout, RELEASES_API if IS_WINDOWS else LINUX_RELEASES_API))
+    if IS_WINDOWS:
+        return newest_release(fetch_releases(timeout, RELEASES_API))
+    return newest_release(fetch_releases(timeout, LINUX_RELEASES_API), LINUX_SETUP_SUFFIX)
 
 
 # Home's patch notes (Kaniel 2026-10-20: every release's, from the latest back to the first) are the

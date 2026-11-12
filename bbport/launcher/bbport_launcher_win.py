@@ -567,8 +567,9 @@ def display_modes():
             pass
     return _display_modes
 # LINUX_FORK: bbport.ini light_grid (scripts/patches.py LIGHT_GRIDS): the community Light Grid patches.
-LIGHT_GRID_CHOICES = [('auto', ('Auto (Steam Deck grid at 1280 × 800, else the game\'s own)',)),
-                      ('off', ("The game's own",)),
+LIGHT_GRID_CHOICES = [('auto', ('Auto (Steam Deck grid at 1280 × 800, else the game\'s own)',
+                                'Авто (сетка Steam Deck при 1280 × 800, иначе собственная сетка игры)')),
+                      ('off', ("The game's own", 'Собственная сетка игры')),
                       ('1280x800', ('1280 × 800 (Steam Deck)',)), ('1080p', ('1920 × 1080',)),
                       ('1440p', ('2560 × 1440',)), ('4k', ('3840 × 2160',))]
 LIVE = [('auto', ('Auto (by graphics card)', 'Авто (по видеокарте)')), ('0', ('Off (faster)', 'Выключена (быстрее)')),
@@ -3940,7 +3941,9 @@ class Launcher:
             steam_button.configure(state='disabled')
         if not IS_WINDOWS:
             self.note(files, _('Add to Steam is off in the Linux build for now (README-Linux.txt: add '
-                               'run-game.sh by hand in Steam, Games > Add a Non-Steam Game).'), top=10)
+                               'run-game.sh by hand in Steam, Games > Add a Non-Steam Game).',
+                               'В сборке для Linux «Добавить в Steam» пока выключено (README-Linux.txt: добавьте '
+                               'run-game.sh в Steam вручную, «Игры» > «Добавить стороннюю игру»).'), top=10)
         self.note(files, _("In the game, Insert or L3 + R3 opens the port's menu.",
                            'В игре Insert или L3 + R3 открывает меню порта.'), top=14)
         if COOP_INSTALL:
@@ -4081,12 +4084,11 @@ class Launcher:
             return
         self.root.after_idle(lambda: self.messagebox.showwarning(
             _('Frame rate in co-op', 'Частота кадров в кооперативе'),
-            _('Unlocked and 90 FPS in co-op are still in testing. Unlocked goes up to 120 FPS, or to the frame cap '
-              'below (30 FPS suits a Steam Deck), and 90 FPS up to 90; your game still sends its updates to the '
-              'team as often as at 60.\n\n'
+            _('Above 60 FPS in co-op is still in testing. Unlocked goes up to 120 FPS and 90 FPS up to 90; '
+              'your game still sends its updates to the team as often as at 60.\n\n'
               'If you or your team see enemies or players lag, set the frame rate back to 60 FPS.',
-              '«Без ограничения» и 90 FPS в кооперативе — пока в тестировании. «Без ограничения» — до 120 FPS '
-              'или до ограничения FPS ниже (30 FPS подходит для Steam Deck), 90 FPS — до 90; игра по-прежнему отправляет обновления команде так же часто, как при 60.\n\n'
+              'Больше 60 FPS в кооперативе — пока в тестировании. «Без ограничения» — до 120 FPS, 90 FPS — '
+              'до 90; игра по-прежнему отправляет обновления команде так же часто, как при 60.\n\n'
               'Если у вас или у команды лагают враги или игроки, верните 60 FPS.')))
 
     def build_coop_popup(self):
@@ -5417,7 +5419,12 @@ class Launcher:
                  _("The grid the game sorts its lights into (community Light Grid patches). A smaller one is "
                    "faster; match it to the output. Auto: the Steam Deck's 1280 × 800 grid at that output, the "
                    "game's own grid at any other. Set at start: after changing the output in the game, restart "
-                   "it. Lights missing or cut off near the screen's edges: choose the game's own.",))
+                   "it. Lights missing or cut off near the screen's edges: choose the game's own.",
+                   'Сетка, по которой игра раскладывает источники света (патчи сообщества Light Grid). Меньшая '
+                   'быстрее; подберите её под вывод. Авто: сетка Steam Deck 1280 × 800 при таком выводе, '
+                   'собственная сетка игры при любом другом. Задаётся при запуске: сменив вывод в игре, '
+                   'перезапустите её. Если свет пропадает или обрезается у краёв экрана, выберите собственную '
+                   'сетку игры.'))
         self.check(f, 'sharpen', 'ini', _('Sharpening (RCAS)', 'Резкость (RCAS)'))
         holder = self.tk.Frame(f, bg=CARD)
         Slider(self, holder, self.var('sharpness', 'ini'), 0.0, 2.0, 300).pack(side='left')
@@ -7371,7 +7378,7 @@ class Launcher:
         # that name is updated (pointed at this install, its artwork and play time kept), not doubled.
         name = 'Bloodborne' if IS_WINDOWS else 'Bloodborne BBSC~Yarnham Together'
         done, failed = bbport_steam.add_to_accounts(steam, name, str(exe), str(PORT_DIR), str(icon or exe),
-                                                    options)
+                                                    options, by_name=not IS_WINDOWS)
         if failed:
             text = _('Could not add the game to Steam: {}', 'Не удалось добавить игру в Steam: {}').format(
                 '; '.join(f'{path}: {error}' for path, error in failed))
@@ -7386,7 +7393,10 @@ class Launcher:
             self.messagebox.showinfo('Bloodborne', _(
                 '"{}" is in your Steam library: {} added, {} updated (an existing shortcut of that name keeps its '
                 'artwork and play time). It starts with the settings saved in this launcher. No other shortcut is '
-                'changed, and shortcuts.vdf as it was is kept beside it as shortcuts.vdf.<date-time>.yt.bak.'
+                'changed, and shortcuts.vdf as it was is kept beside it as shortcuts.vdf.<date-time>.yt.bak.',
+                '«{}» в библиотеке Steam: добавлено {}, обновлено {} (у существующего ярлыка с таким названием '
+                'остаются обложка и время игры). Игра запускается с настройками, сохранёнными в лаунчере. Другие '
+                'ярлыки не меняются, а прежний shortcuts.vdf сохранён рядом как shortcuts.vdf.<дата-время>.yt.bak.'
             ).format(name, added, len(done) - added))
             return
         self.messagebox.showinfo('Bloodborne', _('Bloodborne is in your Steam library: {} added, {} updated (one shortcut per Steam '

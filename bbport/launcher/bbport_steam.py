@@ -92,15 +92,17 @@ def _names(shortcuts):
     return out
 
 
-def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
-    """Adds the shortcut to one shortcuts.vdf, or updates the entry with the same name (any case) or the
-    same exe and name. Returns 'added' or 'updated'. Raises OSError or ValueError, and then leaves the
-    file as it was.
+def add_shortcut(vdf_path, name, exe, start_dir, icon, options='', by_name=False):
+    """Adds the shortcut to one shortcuts.vdf, or updates the entry with the same exe and name (the two
+    Steam makes its id of; in a source tree the exe is python(w).exe, which other shortcuts may use too,
+    so the exe alone is not enough), keeping what Steam or the player added to it (play time, tags).
+    Returns 'added' or 'updated'. Raises OSError or ValueError, and then leaves the file as it was.
 
     LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck), after a Steam Deck's 40 shortcuts were found down
     to 2 (2026-11-09):
-    - An entry of that name is updated in place: its Exe and StartDir point at this install, and
-      everything else stays (its appid, so its artwork, play time, launch options, controller layout).
+    - by_name (the Linux launcher): an entry of that name (any case) is updated in place: its Exe and
+      StartDir point at this install, and everything else stays (its appid, so its artwork, play
+      time, launch options, controller layout).
     - Nothing is ever removed: the list about to be written is read back and must hold every entry
       it held before (one more when adding), or nothing is written.
     - Each write first keeps the file as it was, as shortcuts.vdf.<date-time>.yt.bak (and the first
@@ -117,8 +119,16 @@ def add_shortcut(vdf_path, name, exe, start_dir, icon, options=''):
     target = f'"{exe}"'.lower()
     for index, (kind, key, value) in enumerate(shortcuts):
         fields = {k.lower(): v for _t, k, v in value} if kind == MAP else {}
-        same_name = str(fields.get('appname', '')).strip().lower() == name.strip().lower()
-        if same_name or (str(fields.get('exe', '')).lower() == target and fields.get('appname') == name):
+        same = str(fields.get('exe', '')).lower() == target and fields.get('appname') == name
+        if same and not by_name:
+            # Keep what Steam or the player added (play time, tags).
+            kept = {'lastplaytime', 'tags'}
+            old = {k.lower(): (t, k, v) for t, k, v in value}
+            shortcuts[index] = (MAP, key, [old[k.lower()] if k.lower() in kept and k.lower() in old else (t, k, v)
+                                            for t, k, v in new])
+            result = 'updated'
+            break
+        if by_name and (same or str(fields.get('appname', '')).strip().lower() == name.strip().lower()):
             updates = {'exe': f'"{exe}"', 'startdir': f'"{start_dir}"'}
             kept = [(t, k, updates[k.lower()]) if k.lower() in updates else (t, k, v) for t, k, v in value]
             present = {k.lower() for _t, k, _v in kept}
@@ -255,7 +265,7 @@ def steam_running():
         kernel32.CloseHandle(snapshot)
 
 
-def add_to_accounts(steam, name, exe, start_dir, icon, options=''):
+def add_to_accounts(steam, name, exe, start_dir, icon, options='', by_name=False):
     """Adds the shortcut for every Steam account of STEAM (its install folder). Returns (done, failed):
     done lists (shortcuts.vdf path, 'added' or 'updated'), failed lists (path, the error); a file that
     cannot be written is left as it was and does not stop the others."""
@@ -263,7 +273,7 @@ def add_to_accounts(steam, name, exe, start_dir, icon, options=''):
     for config in user_configs(steam):
         path = config / 'shortcuts.vdf'
         try:
-            done.append((path, add_shortcut(path, name, exe, start_dir, icon, options)))
+            done.append((path, add_shortcut(path, name, exe, start_dir, icon, options, by_name)))
         except (OSError, ValueError) as error:
             failed.append((path, error))
     return done, failed
