@@ -3588,7 +3588,7 @@ class Launcher:
                         bg=BG).pack(side='left', padx=(px(8), 0))
             self.coop_server_line = self.label(row, '', 'small', MUTED, bg=BG)
             self.coop_server_line.pack(side='left', padx=(px(12), 0))
-            if not IS_WINDOWS:  # LINUX_FORK: no server of its own to start (coop_server_row_follows)
+            if not self.coop_has_server():  # LINUX_FORK: a Linux package without shadnet has none to start
                 row.pack_forget()
         line = tk.Frame(left, bg=BG)
         line.pack(side='top', anchor='w', pady=(px(8), 0))
@@ -4834,14 +4834,20 @@ class Launcher:
             self.refresh_status()
             self.refresh_game_line()
 
+    @staticmethod
+    def coop_has_server():
+        """LINUX_FORK: whether this install has a co-op server to start (always on Windows; on Linux when
+        shadnet was built into the package, Tutuzaooo's Start server and Stop server)."""
+        return IS_WINDOWS or (bbport_coop.server_folder(PORT_DIR) / bbport_coop.SERVER_EXE).is_file()
+
     def coop_server_row_follows(self):
         """Start server and Stop server are a Local host's: on the public server nobody runs one (Kaniel
         2026-11-06), so the bottom bar shows them only while Local is chosen."""
         row = getattr(self, 'server_row', None)
         if row is None:
             return
-        # LINUX_FORK: the Linux build has no server of its own to start (shadnet is Windows-only for now).
-        if self.coop.get('server_type') == 'global' or not IS_WINDOWS:
+        # LINUX_FORK: a Linux package built without shadnet has no server of its own to start.
+        if self.coop.get('server_type') == 'global' or not self.coop_has_server():
             row.pack_forget()
         elif not row.winfo_manager():
             row.pack(side='left', padx=(self.px(14), 0))
