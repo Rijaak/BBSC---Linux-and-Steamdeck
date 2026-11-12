@@ -268,3 +268,30 @@ TEST(LoadedParamSlots, ATablesSizeReachesItsFurthestRow) {
     entry(0, 0x30);
     EXPECT_EQ(ParamTableSize(param, 3, 0x10), 0x40u + 3 * 24) << "never less than its entries";
 }
+
+// Bug audit 24 (Redichoti 2026-10-30: enemy HP near zero for his friends, full for him; rig
+// hp-lossy-link 2026-11-10): the scaling changed the tables only, so the host's copies loaded
+// before the second hunter came kept 484/484 while the guest's, loaded after, had 484/726, and the
+// game's own HP sync (the owner's HP as it is) made the same enemy's bar full for one and two
+// thirds for the other. When this game's scaling changes, its copies already loaded take it too:
+// base max (data +0x104, what the game makes the max from again), max and HP, keeping the HP share.
+TEST(BloodborneHarderEnemies, CopiesAlreadyLoadedTakeTheNewScaling) {
+    // Rig handed-out-max-watch 2026-11-10: 0x1001402e's base (data +0x100) is 70 on the host and
+    // 105 on the guest; the game makes its max from it (0x01A0D7D0: 179 and 268) whenever it
+    // likes (a hand-out), so the base takes the rate, truncated as the game's own maths.
+    EXPECT_EQ(RescaleLoadedHp(70, 179, 179, 179, 1.0f, 1.5f), (RescaledHp{105, 268, 268, 268}))
+        << "whole stays whole, as the game makes 105's max";
+    EXPECT_EQ(RescaleLoadedHp(484, 484, 484, 242, 1.0f, 1.5f), (RescaledHp{726, 726, 726, 363}))
+        << "half stays half";
+    EXPECT_EQ(RescaleLoadedHp(726, 726, 726, 363, 1.5f, 1.0f), (RescaledHp{484, 484, 484, 242}))
+        << "a hunter left: back down";
+    EXPECT_EQ(RescaleLoadedHp(958, 1917, 1917, 1917, 1.0f, 1.5f),
+              (RescaledHp{1437, 2875, 2875, 2875}))
+        << "an effect's rate on the max stays on top of the base";
+    EXPECT_EQ(RescaleLoadedHp(484, 484, 484, 1, 1.0f, 1.5f), (RescaledHp{726, 726, 726, 1}))
+        << "a living copy never below 1";
+    EXPECT_EQ(RescaleLoadedHp(484, 484, 484, 0, 1.0f, 1.5f), (RescaledHp{726, 726, 726, 0}))
+        << "dead stays dead";
+    EXPECT_EQ(RescaleLoadedHp(484, 484, 484, 484, 1.5f, 1.5f), std::nullopt) << "no change";
+    EXPECT_EQ(RescaleLoadedHp(0, 0, 0, 0, 1.0f, 1.5f), std::nullopt) << "no HP: no enemy";
+}

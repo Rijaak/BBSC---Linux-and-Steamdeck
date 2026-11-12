@@ -121,6 +121,23 @@ SKIP_NETWORK_CHOICE='Skip Online/Offline Choice'
 GX_COMMAND_HEAP='Larger GX Per-Frame Command Heap'
 
 
+# Brazilian Portuguese and Latin American Spanish (PS4 system languages 17 and 20, the launcher's
+# BB_LANGUAGE): the game picks its text and voice by sell region (GetSellRegion 0x1fb9190: 0 Japan,
+# 1 North America, 2 Europe, 3 Asia, 4 UK). Europe turns 17 into Portugal Portuguese and 20 into
+# Spain's Spanish, with English voice for Portuguese; North America has both with their own voice
+# (every copy holds the files). So with one of the two chosen the game runs as the American
+# release. Only then: North America has no German, Italian, Russian... text. The confirm button
+# (X) and the save folder are the same; the co-op servers serve every region. A copy that already
+# is American is unchanged. BB_LANGUAGE_REGION=0 leaves the region alone.
+LANGUAGE_REGION='North American Region (Brazilian Portuguese, Latin American Spanish)'
+AMERICAN_LANGUAGES=('17','20')
+
+
+def language_region(env=os.environ):
+    return (env.get('BB_LANGUAGE','').strip() in AMERICAN_LANGUAGES
+            and env.get('BB_LANGUAGE_REGION','1').strip()!='0')
+
+
 def gx_command_heap(env=os.environ):
     return env.get('BB_GX_COMMAND_HEAP','1')!='0'
 
@@ -701,6 +718,24 @@ def frame_rate_fixes(names, image_bytes, segments, env=os.environ):
     return named
 
 
+def crash_guards(image_bytes, segments, env=os.environ):
+    """[(name, offset, data)]: the crash guards (crash_guards.py, from Supermedo's bloodborne_pc
+    f1999924: the game's own unchecked pointers that crashed players), at any frame rate. Skipped
+    when the site holds other code or the code segment's last page is not free; BB_CRASH_GUARDS=0
+    turns them off."""
+    if env.get('BB_CRASH_GUARDS')=='0':
+        return []
+    sys.path.insert(0,str(Path(__file__).resolve().parent))
+    import code_cave, crash_guards as guards
+    try:
+        code_cave.check_segments(segments)
+        guards.check_original(image_bytes)
+    except ValueError as error:
+        print(f'Patches: {error}; crash guards skipped')
+        return []
+    return [('Crash guards',offset,data) for offset,data in guards.code_writes()]
+
+
 def report_coop_conflicts(conflicts, out=sys.stderr):
     """Says, loudly, which game patch breaks which co-op feature (the launcher shows this output
     and keeps it in last_run.log)."""
@@ -787,6 +822,8 @@ def main():
     names=list(fps_names)
     if whole:  # other patches' code is not fingerprinted
         names+=[n.strip() for n in a.extra.split(';') if n.strip()]
+    if whole and language_region() and LANGUAGE_REGION not in names:
+        names.append(LANGUAGE_REGION)
     names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names and GROUP_OF.get(n) in groups]
     if 'fixes' in groups:
         if intel_tonemap_fix() and INTEL_TONEMAP not in names:
@@ -825,6 +862,11 @@ def main():
         fixes=frame_rate_fixes(names,lambda start,end: eboot_bytes(elf,start,end),segments)
         named+=fixes
         names+=list(dict.fromkeys(name for name,_,_ in fixes))
+    # Crash guards: at any frame rate, wherever the guarded code is the 01.09 build's (they check it).
+    elf=(a.out/'eboot.elf').read_bytes()
+    guards=crash_guards(lambda start,end: eboot_bytes(elf,start,end),segments)
+    named+=guards
+    names+=list(dict.fromkeys(name for name,_,_ in guards))
     try:
         report_coop_conflicts(coop_conflicts(named))
     except (OSError, ValueError, KeyError) as error:

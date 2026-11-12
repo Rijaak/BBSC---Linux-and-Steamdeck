@@ -82,6 +82,17 @@ class ValidatePassesTheIntendedPatches(unittest.TestCase):
     def test_an_unpatched_file_is_valid(self):
         tool.validate(shop_file(), shop_file(), [])
 
+    def test_an_empty_event_may_give_any_instruction_offset(self):
+        """Mods' event files (written by event editors) give an event without instructions the
+        offset -1; the game reads nothing there. The tool refused such a file, so co-op did not
+        start with that mod (Supermedo's 1.9.8.1 fix)."""
+        EMPTY = 10008890
+        emevd = bytearray(build_emevd({SHOP: shop_lines(), EMPTY: []}, SHOP_PARAMETERS))
+        at, entry = event_entry(bytes(emevd), EMPTY)
+        self.assertEqual(entry[1], 0)
+        struct.pack_into('<q', emevd, at + 16, -1)
+        tool.validate(bytes(emevd), bytes(emevd), [])
+
     def test_a_local_event_with_its_parameters_moved_along(self):
         edits = []
         patched, count = tool.make_events_local(shop_file(), {SHOP}, edits)
@@ -272,6 +283,25 @@ class TheGamesEventFiles(unittest.TestCase):
                 tool.validate(original, output, edits, name)
                 patched += 1
         self.assertGreater(patched, 10)
+
+    def test_no_fog_stays_shut_for_a_guest_alone(self):
+        """A boss fog event that hides its wall (2005:3 off, then its fog SFX off) skips that
+        for a client (1003:5 lines, state 1) in the game's files. After the patch no such skip
+        is left, so no guest faces a fog the host does not (2026-11-08: Rom's, m32_00 13204830,
+        and the chalice dungeons' passage and boss fogs, m29 12906789/12906796/12906800)."""
+        left = []
+        for name, path in game_event_files().items():
+            output, _, _ = tool.patch_file(name, path.read_bytes())
+            emevd = tool.load_dcx(output if output is not None else path.read_bytes())
+            for event in tool.parse(emevd)['events']:
+                instructions = event['instructions']
+                for k, (bank, ident, _, _, args) in enumerate(instructions):
+                    if (bank, ident) != (1003, 5) or args[1] != 1:
+                        continue
+                    skipped = instructions[k + 1:k + 1 + args[0]]
+                    if any((b, i) == (2005, 3) and a[4] == 0 for b, i, _, _, a in skipped):
+                        left.append(f'{name} {event["id"]} #{k}')
+        self.assertEqual(left, [])
 
     def test_the_shop_patch_before_the_parameter_fix_on_the_real_dream(self):
         original = tool.load_dcx(game_event_files()[DREAM].read_bytes())

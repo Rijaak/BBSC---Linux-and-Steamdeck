@@ -135,10 +135,6 @@ USER_FILES = ('user', 'out', 'mods', 'bbport.ini', 'mods.json', 'patches.json', 
 # variables, see game_environment().
 RESHADE_DIR = PORT_DIR / 'bin' / 'reshade'
 RESHADE_LAYER = 'VK_LAYER_bbport_reshade'
-# HudSight (a crosshair overlay) crashes the game while it makes its Vulkan device (VK_LAYER_HudSight2 in
-# vulkan-1.dll+0x45a10 under hudsightvk64.dll, and XeSS's device setup through it): a player's game closed on
-# every start (2026-10-25). The loader takes a glob, so any HudSight version is skipped.
-CRASHING_VK_LAYERS = ('*HudSight*',)
 RESHADE_PRESET_PREFIX = 'Bloodborne - '  # the shipped presets; the dropdowns show the rest of the name
 
 
@@ -201,6 +197,11 @@ def run_command():
     return [sys.executable, '--run'] if FROZEN else [sys.executable, str(PORT_DIR / 'run.py')]
 
 
+def stop_servers_command():
+    """This launcher as the one that stops the co-op server once nothing uses it (bbport_coop.STOP_WHEN_UNUSED)."""
+    return [sys.executable, *([] if FROZEN else [str(Path(__file__).resolve())]), bbport_coop.STOP_WHEN_UNUSED]
+
+
 # ---------------------------------------------------------------------------------------------
 # Languages: every text is written in English with the Russian next to it; the other
 # languages are in bbport_lang.py, keyed by the English text.
@@ -236,15 +237,6 @@ COOP_INSTALL = os.environ.get('BB_COOP_INSTALL') == '1' or (PORT_DIR / 'event-re
 # The co-op release's name in the launcher: the repository's (Kaniel 2026-11-04,
 # Amanises-Yharnam-Together/BBSC-Yharnam-Together). The setup, its folder and shortcuts keep theirs.
 COOP_NAME, COOP_SHORT_NAME = 'BBSC: Yharnam Together', 'BBSC: Yharnam Together'
-HARDER_CHOICES = [('off', ('Off (the normal game)', 'Выключено (обычная игра)')),
-                  (bbport_coop.HARDER_BIT, ('A bit harder: enemy HP ×1.5, damage ×1.25, poise ×1.5',
-                                            'Чуть сложнее: HP врагов ×1.5, урон ×1.25, стойкость ×1.5')),
-                  (bbport_coop.HARDER_ON, ('Harder: enemy HP ×3, damage ×1.5, poise ×3',
-                                           'Сложнее: HP врагов ×3, урон ×1.5, стойкость ×3')),
-                  (bbport_coop.HARDER_MUCH, ('Much harder: enemy HP ×5, damage ×2, poise ×5',
-                                             'Намного сложнее: HP врагов ×5, урон ×2, стойкость ×5')),
-                  # Kaniel 2026-10-21: the presets were too specific; the player sets each multiplier.
-                  ('custom', ('Custom', 'Свои значения'))]
 
 
 def coop_release_version():
@@ -930,6 +922,16 @@ def reason_text(reason):
     return _(reason, UPSCALER_REASONS_RU.get(reason))
 
 
+def experimental_hint():
+    """The note under the Experimental features switch: what it unlocks for now."""
+    return _('Unlocks options that are still being tested and marked (experimental). For now: frame generation '
+             '(it can crash the game), FSR 4.1.1, and object motion vectors on AMD graphics cards, which can '
+             'lower the frame rate or draw some objects wrong.',
+             'Открывает функции, которые ещё проверяются и помечены (экспериментально). Пока это генерация кадров '
+             '(с ней игра может вылетать), FSR 4.1.1 и векторы движения объектов на видеокартах AMD: они могут '
+             'снижать FPS или неправильно рисовать объекты.')
+
+
 def object_motion_hint(experimental):
     """The note under 'Object motion vectors'. On AMD graphics cards the game keeps it off, unless
     Experimental features (Advanced) is on and the player turns on the AMD switch below it."""
@@ -1072,6 +1074,18 @@ def ini_values(ini):
     return {**{key: ini[key] for key in INI_DEFAULTS}, **bbport_controls.ini_updates(ini)}
 
 
+def dlc_text(game, label):
+    """(what the DLC row says, whether the game gets The Old Hunters) for the game folder and the label of
+    the player's DLC package: an edition sold with the DLC has it without a package (Dinkles 2026-10-31: a
+    Game of the Year edition said "Not installed")."""
+    label = str(label).strip()
+    if label:
+        return label, True
+    if bbport_coop.edition_addcont(game):
+        return _('Included in this edition', 'Входит в это издание'), True
+    return _('Not installed', 'Не установлено'), False
+
+
 def game_info(folder):
     """(title, app version) of a game folder, or None without eboot.bin."""
     folder = Path(folder or '.')
@@ -1201,7 +1215,9 @@ def game_environment(s, frame_generation=None):
         frame_generation = ini.get('frame_generation') == '1'
     # Auto caps the game only while frame generation can run: the game turns it off with the
     # upscaler off or with HDR output, and the cap would then only cost frames.
-    frame_generation = (frame_generation
+    # Frame generation is hidden until it works (Discord 2026-10-21..11-01: toggling it crashed the
+    # game, and it did nothing at co-op's 60 FPS): only Experimental features offer it.
+    frame_generation = (frame_generation and bool(s.get('experimental'))
                         and ini.get('upscaler', INI_DEFAULTS['upscaler']) != 'off')
     env = dict(os.environ)
     env['BB_GAME_DIR'] = s['game_dir']
@@ -1221,8 +1237,10 @@ def game_environment(s, frame_generation=None):
     env['BB_RELEASE_VERSION'] = coop_release_version() or 'dev'
     if str(s['player_name']).strip():
         env['BB_USER_NAME'] = str(s['player_name']).strip()
-    if str(s.get('addcont', '')).strip():
-        env['BB_ADDCONT'] = str(s['addcont']).strip()
+    # The player's DLC package, else the edition's own (bbport_coop.DLC_EDITIONS).
+    addcont = str(s.get('addcont', '')).strip() or bbport_coop.edition_addcont(s.get('game_dir'))
+    if addcont:
+        env['BB_ADDCONT'] = addcont
     # Window mode and HDR are bbport.ini keys (window_mode, hdr) the game reads itself.
     if str(s.get('monitor', '')).strip():  # the game opens on the primary monitor when this one is gone
         env['BB_DISPLAY'] = str(s['monitor']).strip()
@@ -1247,6 +1265,11 @@ def game_environment(s, frame_generation=None):
     if s.get('experimental') and s.get('object_motion_amd') \
             and ini.get('object_motion', INI_DEFAULTS['object_motion']) == '1':
         env['BB_OBJECT_MOTION_AMD'] = '1'
+    # The game keeps frame generation off and shows no rows for it (BbSettings::FrameGenHidden).
+    if s.get('experimental'):
+        env.pop('BB_FRAME_GEN_HIDDEN', None)
+    else:
+        env['BB_FRAME_GEN_HIDDEN'] = '1'
     # FSR 4.1.1 (fsr4vk) is experimental: its DLL sits in the install's fsr4vk folder and is loaded only
     # while the switch is on.
     env['BB_FSR4VK_DIR'] = str(fsr4vk_dir())
@@ -1256,9 +1279,10 @@ def game_environment(s, frame_generation=None):
         env.pop('BB_FSR4VK', None)  # the switch decides: an inherited 0 would leave the dropdown on and the game off
     # Overlay layers that crash the game while it makes its Vulkan device, before the first frame: the
     # loader skips them for this run only (extra_env can set VK_LOADER_LAYERS_DISABLE back).
-    disabled = [item for item in env.get('VK_LOADER_LAYERS_DISABLE', '').split(',') if item]
-    env['VK_LOADER_LAYERS_DISABLE'] = ','.join(disabled + [layer for layer in CRASHING_VK_LAYERS
-                                                           if layer not in disabled])
+    # The list is bbport_support.CRASHING_OVERLAYS.
+    reshade_on = bool(s.get('reshade') and reshade_ready())
+    env['VK_LOADER_LAYERS_DISABLE'] = bbport_support.layers_to_skip(env.get('VK_LOADER_LAYERS_DISABLE', ''),
+                                                                    bbport_support.vulkan_layers(), reshade=reshade_on)
     for item in str(s['extra_env']).split():
         if '=' in item:
             key, value = item.split('=', 1)
@@ -1271,7 +1295,7 @@ def game_environment(s, frame_generation=None):
         env['BB_SHADNET_NPID'] = str(s['online_npid']).strip()
         env['BB_SHADNET_PASSWORD'] = str(s['online_password'])
         env['BB_COMMUNITY_SERVER'] = community_address(s['online_community'])
-    if s.get('reshade') and reshade_ready():
+    if reshade_on:
         # An explicit layer for this run only; its files, settings and log stay in bin/reshade.
         for name, value in (('VK_ADD_LAYER_PATH', str(RESHADE_DIR)), ('VK_INSTANCE_LAYERS', RESHADE_LAYER)):
             env[name] = os.pathsep.join(filter(None, (env.get(name), value)))
@@ -3250,17 +3274,19 @@ class Launcher:
 
     def grey_with_upscaler(self, row, *notes):
         """Frame generation works on top of an upscaler: the switch is greyed while the upscaler is Off
-        (its value is kept)."""
-        upscaler = self.var('upscaler', 'ini')
+        (its value is kept), and while Experimental features (Advanced) are off: it is hidden in the
+        game until it works."""
+        upscaler, experimental = self.var('upscaler', 'ini'), self.var('experimental', 'app')
 
         def apply(*_args):
-            on = upscaler.get() != 'off'
+            on = upscaler.get() != 'off' and bool(experimental.get())
             row.knob.set_enabled(on)
             row.caption.configure(fg=TEXT if on else DIM)
             for note in notes:
                 if note is not None:
                     note.configure(fg=MUTED if on else DIM)
         upscaler.trace_add('write', apply)
+        experimental.trace_add('write', apply)
         apply()
 
     def note(self, parent, text, top=12):
@@ -3765,6 +3791,13 @@ class Launcher:
         for var in (generation, cap):
             var.trace_add('write', show_note)
         show_note()
+        experimental = self.var('experimental', 'app')
+
+        def offer(*_args, cell=holder):
+            """The Simple page shows the switch only while Experimental features (Advanced) offer it."""
+            cell.grid() if experimental.get() else cell.grid_remove()
+        experimental.trace_add('write', offer)
+        offer()
         for key in ('fps_mode', 'upscaler', 'output_res'):
             self.vars[key].trace_add('write', lambda *_a: self.refresh_status())
         self.build_map_card(page)
@@ -3924,8 +3957,9 @@ class Launcher:
     def build_coop_popup(self):
         """The co-op settings, over the whole window (Kaniel 2026-10-16): opened from the menu, and by
         itself at the first start; the launcher stays behind it until the game folder and the host's IP
-        are set and Done is pressed. Kaniel 2026-10-25: steps instead of one page of switches: the game and
-        the host, then how the enemies get harder, then how the team travels."""
+        are set and Done is pressed. Kaniel 2026-10-25: steps instead of one page of switches. Kaniel
+        2026-11-11: the server, then the game and the host; no party settings (the enemies, Rot, travel and
+        the boss tempo are the team's, its leader's on the game's team screen)."""
         tk, ttk, px = self.tk, self.ttk, self.px
         self.coop = bbport_coop.load_settings(PORT_DIR)
         self.coop_busy = self.coop_searching = False
@@ -3943,7 +3977,7 @@ class Launcher:
         card.frame.pack_configure(padx=0, pady=0)
         card.columnconfigure(0, weight=1, uniform='coop', minsize=0)
         card.columnconfigure(1, weight=1, uniform='coop', minsize=0)
-        self.coop_vars, self.coop_picked = {}, set()
+        self.coop_vars = {}
 
         def var(key, value=None):
             v = tk.StringVar(value=self.coop.get(key, '') if value is None else value)
@@ -3953,8 +3987,7 @@ class Launcher:
 
         self.coop_intro = self.flow(card, '', 'body', MUTED)
         self.coop_intro.grid(row=1, column=0, columnspan=2, sticky='we', pady=(px(6), px(4)))
-        self.coop_step_names = [_('Server', 'Сервер'), _('Game and host', 'Игра и хост'), _('Enemies', 'Враги'),
-                                _('Travel', 'Путешествия')]
+        self.coop_step_names = [_('Server', 'Сервер'), _('Game and host', 'Игра и хост')]
         bar = tk.Frame(card, bg=CARD)
         bar.grid(row=2, column=0, columnspan=2, sticky='we', pady=(px(14), px(2)))
         self.coop_step_tabs, self.coop_step_lines = [], [None]
@@ -4025,135 +4058,7 @@ class Launcher:
         self.switch(glow, self.coop_glow_var, _(bbport_coop.NO_GLOW_TEXT, 'Показывать союзников без синего '
                                                 'свечения фантома (только на вашем экране)')).pack(anchor='w')
 
-        # Step 3: how the enemies get harder (the same for every player), and Rot.
-        page = steps[2]
-        self.label(page, _('How do the enemies get harder? The same for every player.',
-                           'Как усиливаются враги? У всех игроков одинаково.'), 'small', MUTED).grid(
-            row=0, column=0, columnspan=2, sticky='w', pady=(px(10), px(4)))
-        scale = self.coop_rule_var('rule_scale')
-        self.coop_enemy_mode = self.coop_mode_var(scale, 'auto', 'fixed')
-        self.coop_option(page, self.coop_enemy_mode, 'auto',
-                         _('Auto: scale with the hunters on the map', 'Авто: по числу охотников на карте'),
-                         _('Normal enemies for a hunter alone, stronger with each teammate on the same map, up to '
-                           'Harder (HP ×3, damage ×1.5, poise ×3) for a full team.',
-                           'Обычные враги для одного охотника, сильнее с каждым союзником на той же карте, до '
-                           '«Сложнее» (HP ×3, урон ×1.5, стойкость ×3) для полной команды.')).grid(
-            row=1, column=0, columnspan=2, sticky='we', pady=(px(6), 0))
-        fixed = self.coop_option(page, self.coop_enemy_mode, 'fixed',
-                                 _('Fixed: one level for the whole hunt', 'Постоянно: один уровень на всю игру'),
-                                 _('The enemies stay as hard as you pick here, however many hunters are around.',
-                                   'Враги такие, как вы выберете, сколько бы охотников ни было рядом.'))
-        fixed.grid(row=2, column=0, columnspan=2, sticky='we', pady=(px(8), 0))
-        enemies = fixed.extra
-
-        def combo(cell, key, options):
-            values = [v for v, _t in options]
-            box = ttk.Combobox(cell, values=[_(*t) for _v, t in options], state='readonly', width=30)
-            box.current(values.index(self.coop.get(key)) if self.coop.get(key) in values else 0)
-            v = var(key, values[box.current()])
-
-            def picked(_e):
-                self.coop_picked.add(key)
-                v.set(values[box.current()])
-                self.coop_enemy_mode.set('fixed')
-                self.coop_changed_soon()
-            box.bind('<<ComboboxSelected>>', picked)
-            box.pack(fill='x')
-            if self.coop.get('confirmed') != '1':
-                box.set('')  # chosen once by the player (Kaniel 2026-10-16), not taken by default
-            else:
-                self.coop_picked.add(key)
-            return box
-
-        saved = self.coop.get('harder', 'off')
-        presets = [v for v, _t in HARDER_CHOICES if v != 'custom']
-        custom = saved not in presets and bbport_coop.valid_harder(saved)
-        if custom:
-            self.coop['harder'] = 'custom'  # the box shows Custom; the variable gets the rates back below
-        self.coop_enemies = combo(enemies, 'harder', HARDER_CHOICES)
-        self.build_coop_custom(enemies, saved if custom else bbport_coop.HARDER_ON)
-        if custom:
-            self.coop['harder'] = saved
-            self.coop_custom_changed()
-
-        def enemies_picked(_e):
-            if self.coop_enemies_choice() == 'custom':
-                self.coop_custom.pack(fill='x', pady=(px(8), 0))
-                self.coop_custom_changed()
-            else:
-                self.coop_custom.pack_forget()
-        self.coop_enemies.bind('<<ComboboxSelected>>', enemies_picked, add='+')
-        tk.Frame(enemies, bg=CARD, height=px(12)).pack(side='bottom')
-
-        def fixed_follows(*_a):
-            # Auto takes its own levels: the box keeps the fixed one for when Fixed is picked again.
-            self.coop_enemies.configure(state='readonly' if self.coop_enemy_mode.get() == 'fixed' else 'disabled')
-        self.coop_enemy_mode.trace_add('write', fixed_follows)
-        fixed_follows()
-        cell = self.cell(page, 3, 0, _('Death cost (optional)', 'Цена смерти (по желанию)'), span=2)
-        cell.grid_configure(pady=(px(18), 0))
-        self.coop_rule_switch(cell, 'rule_rot', _('Rot: each real death adds a penalty (up to 5); a lamp, a level '
-                                                  'up, a boss, your killer or your bloodstain takes it away',
-                                                  'Гниль: каждая настоящая смерть даёт штраф (до 5); лампа, уровень, '
-                                                  'босс, ваш убийца или ваше пятно крови снимают его'))
-        # Kaniel 2026-10-28: the boss tempo host rule (bosses rest less between attacks, turn faster).
-        cell = self.cell(page, 4, 0, _('Boss tempo (optional)', 'Темп боссов (по желанию)'), span=2)
-        cell.grid_configure(pady=(px(14), 0))
-        tempos = [('', _('Vanilla: the game\'s own', 'Как в игре')),
-                  ('aggressive', _('Aggressive: half the pauses, turns ×1.3', 'Агрессивный: вдвое меньше пауз, '
-                                                                               'поворот ×1.3')),
-                  ('relentless', _('Relentless: a quarter of the pauses, turns ×1.6',
-                                   'Беспощадный: вчетверо меньше пауз, поворот ×1.6'))]
-        saved_tempo = self.coop.get('rule_tempo', '')
-        tempo = var('rule_tempo', saved_tempo if saved_tempo in bbport_coop.BOSS_TEMPOS else '')
-        self.coop_tempo = ttk.Combobox(cell, values=[t for _v, t in tempos], state='readonly', width=44)
-        self.coop_tempo.current([v for v, _t in tempos].index(tempo.get()))
-
-        def tempo_picked(_e):
-            tempo.set(tempos[self.coop_tempo.current()][0])
-            self.coop_changed_soon()
-        self.coop_tempo.bind('<<ComboboxSelected>>', tempo_picked)
-        self.coop_tempo.pack(anchor='w')
-        self.flow(cell, _('Bosses rest less between their attacks and turn faster. Only bosses; the boss\'s '
-                          'own moves and damage stay the game\'s.',
-                          'Боссы меньше отдыхают между атаками и быстрее поворачиваются. Только боссы; их '
-                          'приёмы и урон остаются как в игре.'), 'small', MUTED).pack(fill='x', pady=(px(4), 0))
-        self.note(page, _('Auto, Rot and Boss tempo are host rules: yours count when you lead the team.',
-                          'Авто, гниль и темп боссов — правила хоста: действуют ваши, когда вы лидер команды.'),
-                  top=14)
-
-        # Step 4: how the team travels (its own step: 1.3.2's Server step moved the others on).
-        page = steps[3]
-        self.label(page, _('How does the team travel between lamps and headstones?',
-                           'Как команда перемещается между лампами и надгробиями?'), 'small', MUTED).grid(
-            row=0, column=0, columnspan=2, sticky='w', pady=(px(10), px(4)))
-        travel = self.coop_rule_var('rule_travel')
-        self.coop_travel_mode = self.coop_mode_var(travel, 'together', 'seamless')
-        self.coop_travel_mode_frame = self.coop_option(page, self.coop_travel_mode, 'seamless',
-                         _('Seamless: everyone travels on their own', 'Бесшовно: каждый путешествует сам'),
-                         _('A lamp or headstone takes only you; your teammates stay where they are and you can '
-                           'meet up anywhere.',
-                           'Лампа или надгробие переносят только вас; союзники остаются на месте, и встретиться '
-                           'можно где угодно.'))
-        self.coop_travel_mode_frame.grid(row=1, column=0, columnspan=2, sticky='we', pady=(px(6), 0))
-        together = self.coop_option(page, self.coop_travel_mode, 'together',
-                                    _('Travel together', 'Путь вместе'),
-                                    _('A lamp or headstone asks to take the whole team with you.',
-                                      'Лампа или надгробие предлагают взять с собой всю команду.'))
-        together.grid(row=2, column=0, columnspan=2, sticky='we', pady=(px(8), 0))
-        vote = self.coop_rule_switch(together.extra, 'rule_vote',
-                                     _('With a vote: the team has 20 s, one No stops the trip',
-                                       'С голосованием: у команды 20 с, одно «нет» отменяет путь'))
-        tk.Frame(together.extra, bg=CARD, height=px(12)).pack(side='bottom')
-
-        def vote_follows(*_a):
-            on = self.coop_travel_mode.get() == 'together'
-            vote.knob.set_enabled(on)
-            vote.caption.configure(fg=TEXT if on else DIM)
-        self.coop_travel_mode.trace_add('write', vote_follows)
-        vote_follows()
-        self.note(page, _('Travel is a host rule: yours counts when you lead the team.',
-                          'Путешествия — правило хоста: действует ваше, когда вы лидер команды.'), top=14)
+        # Kaniel 2026-11-11: no Enemies or Travel steps: the team's rules are set in the game.
         self.note(page, _('Make or join a team in the game: Continue, Load Game or New Game opens the team screen. '
                           'Windows asks once to let co-op through its firewall.',
                           'Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают экран '
@@ -4445,8 +4350,7 @@ class Launcher:
         self.coop_changed_soon()
 
     def coop_rule_var(self, key):
-        """A host rule's '1' or '' (Kaniel 2026-10-25: each off by default); the team's leader's are the team's
-        (the game sends them to the server) and the others see them on the team screen."""
+        """A switch's '1' or '' in the co-op settings (off by default)."""
         v = self.tk.StringVar(value='1' if self.coop.get(key) == '1' else '')
         v.trace_add('write', lambda *_a: self.coop_changed_soon())
         self.coop_vars[key] = v
@@ -4460,16 +4364,6 @@ class Launcher:
         row = self.switch(parent, on, title, self.px(640))
         row.pack(anchor='w', pady=(self.px(4), 0))
         return row
-
-    def coop_mode_var(self, rule, on, off):
-        """The choice of a step that turns a host rule on or leaves it off: the two follow each other."""
-        mode = self.tk.StringVar(value=on if rule.get() == '1' else off)
-        mode.trace_add('write', lambda *_a: rule.get() != ('1' if mode.get() == on else '')
-                       and rule.set('1' if mode.get() == on else ''))
-        rule.trace_add('write', lambda *_a: mode.get() != (on if rule.get() == '1' else off)
-                       and mode.set(on if rule.get() == '1' else off))
-        mode.trace_add('write', lambda *_a: self.coop_changed_soon())
-        return mode
 
     def coop_option(self, parent, mode, value, title, text):
         """One answer of a step: a framed row with a diamond that fills while it is the chosen one; what
@@ -4501,14 +4395,12 @@ class Launcher:
         return frame
 
     def coop_visible_steps(self):
-        """The co-op page's steps for this server: Server and Game always, Enemies and Travel on a local
-        server only (Kaniel 2026-11-05: on the public server the team's leader sets them in the game)."""
-        return [0, 1] + bbport_coop.rule_steps(self.coop)
+        """The co-op page's steps: Server and Game (Kaniel 2026-11-11: none for the team's rules)."""
+        return [0, 1]
 
     def coop_go(self, step):
         """Shows a step of the co-op setup; a later one only once the ones before it lack nothing."""
         step = max(0, min(step, self.coop_visible_steps()[-1]))
-        self.coop_custom_tidy()
         if getattr(self, 'coop_change_job', None):
             self.root.after_cancel(self.coop_change_job)
         self.coop_changed()  # what was just typed counts
@@ -4522,50 +4414,24 @@ class Launcher:
     def coop_show_step(self):
         """The step bar, Back, and Next or Done, as the current step and what is missing allow."""
         px = self.px
-        # Kaniel 2026-11-05: on the public server no Enemies or Travel tabs (the team's leader sets them
-        # on the game's team screen); a step it has not is left for its last.
         visible = self.coop_visible_steps()
         last = visible[-1]
-        if self.coop_step > last:
-            self.coop_steps[self.coop_step].grid_forget()
-            self.coop_step = last
-            self.coop_steps[last].grid(row=self.coop_step_row, column=0, columnspan=2, sticky='we')
         step = self.coop_step
-        for index, tab in enumerate(self.coop_step_tabs):
-            line = self.coop_step_lines[index]
-            if index in visible and not tab.winfo_manager():
-                if line is not None:
-                    line.pack(side='left', padx=px(12))
-                tab.pack(side='left')
-            elif index not in visible and tab.winfo_manager():
-                if line is not None:
-                    line.pack_forget()
-                tab.pack_forget()
         # Kaniel 2026-11-05: the setup's steps (Back, Next) only until it was done once; after that the
         # same pages are plain settings: any tab, and Done on each.
         setup = self.coop_setup_mode()
-        on_global = not bbport_coop.rule_steps(self.coop)
-        if setup and on_global:
+        # Kaniel 2026-11-11: the team's rules are nowhere in the launcher, on any server.
+        if setup:
             intro = _('Set co-op up once, in two steps. Everyone uses this same release; the others see your '
                       'character\'s name. Enemies and travel are the team leader\'s, on the game\'s team screen.',
                       'Настройте кооператив один раз, в два шага. Все используют один релиз; другие видят '
                       'имя вашего персонажа. Враги и путешествия выбирает лидер команды, на экране команды '
                       'в игре.')
-        elif setup:
-            intro = _('Set co-op up once, in four steps. Everyone uses this same release; the others see your '
-                      'character\'s name.',
-                      'Настройте кооператив один раз, в четыре шага. Все используют один релиз; другие видят '
-                      'имя вашего персонажа.')
-        elif on_global:
+        else:
             intro = _('Your co-op settings: pick a tab to change it. Enemies and travel are the team '
                       'leader\'s, on the game\'s team screen.',
                       'Ваши настройки кооператива: выберите вкладку, чтобы изменить. Враги и путешествия '
                       'выбирает лидер команды, на экране команды в игре.')
-        else:
-            intro = _('Your co-op settings: pick a tab to change it. Everyone uses this same release; the '
-                      'others see your character\'s name.',
-                      'Ваши настройки кооператива: выберите вкладку, чтобы изменить. Все используют один '
-                      'релиз; другие видят имя вашего персонажа.')
         self.coop_intro.configure(text=intro)
         missing = self.coop_missing_by_step()
         blocked = min((at for at, _text in missing), default=last + 1)
@@ -4584,54 +4450,11 @@ class Launcher:
                                     if here else '')
         self.coop_missing.pack(side='right', padx=(0, px(16)))
 
-    def build_coop_custom(self, parent, start):
-        """The player's own multipliers under the Enemies box, shown for Custom: each 1 to 10, as the game
-        takes them (bbport_coop.harder_value)."""
-        tk, ttk, px = self.tk, self.ttk, self.px
-        frame = self.coop_custom = tk.Frame(parent, bg=CARD)
-        self.coop_custom_vars = []
-        names = [_('Enemy HP ×', 'HP врагов ×'), _('Damage ×', 'Урон ×'), _('Poise ×', 'Стойкость ×')]
-        for column, (name, rate) in enumerate(zip(names, start.split(','))):
-            frame.columnconfigure(column, weight=1, uniform='rates')
-            self.label(frame, name, 'small', MUTED).grid(row=0, column=column, sticky='w',
-                                                         padx=(0 if column == 0 else px(8), 0))
-            v = tk.StringVar(value=rate)
-            v.trace_add('write', lambda *_a: self.coop_custom_changed())
-            box = ttk.Spinbox(frame, textvariable=v, from_=bbport_coop.HARDER_LOWEST, to=bbport_coop.HARDER_HIGHEST,
-                              increment=0.25, width=6)
-            box.grid(row=1, column=column, sticky='we', padx=(0 if column == 0 else px(8), 0), pady=(px(2), 0))
-            box.bind('<FocusOut>', self.coop_custom_tidy, add='+')
-            self.coop_custom_vars.append(v)
-        self.label(frame, _('Each from 1 to 10; 1 is the normal game.', 'Каждое от 1 до 10; 1 — обычная игра.'),
-                   'small', MUTED).grid(row=2, column=0, columnspan=3, sticky='w', pady=(px(4), 0))
-
-    def coop_custom_tidy(self, _event=None):
-        """The Custom fields show the multipliers taken, not the text typed (Kaniel 2026-10-26: a 15 typed
-        came back as 10 at the next start, and Custom looked unsaved)."""
-        if not hasattr(self, 'coop_custom_vars') or self.coop_enemies_choice() != 'custom':
-            return
-        value = bbport_coop.harder_value(*(v.get() for v in self.coop_custom_vars))
-        for v, rate in zip(self.coop_custom_vars, value.split(',') if value != 'off' else ['1'] * 3):
-            if v.get().strip() != rate:
-                v.set(rate)
-
     def coop_flush(self):
         """Saves a change still waiting for typing to pause (Done or closing the launcher right after typing)."""
         if getattr(self, 'coop_change_job', None):
             self.root.after_cancel(self.coop_change_job)
             self.coop_changed()
-
-    def coop_enemies_choice(self):
-        index = self.coop_enemies.current()
-        return HARDER_CHOICES[index][0] if index >= 0 else ''  # -1: not chosen yet
-
-    def coop_custom_changed(self):
-        """Custom: the multipliers typed become the enemies setting."""
-        if self.coop_enemies_choice() != 'custom':
-            return
-        if not self.coop_custom.winfo_manager():
-            self.coop_custom.pack(fill='x', pady=(self.px(8), 0))
-        self.coop_vars['harder'].set(bbport_coop.harder_value(*(v.get() for v in self.coop_custom_vars)))
 
     def build_coop_help(self):
         """How the players reach the host, in the co-op card's place (Kaniel 2026-10-21: players got lost at
@@ -4793,11 +4616,6 @@ class Launcher:
             missing.append((1, _('the game folder', 'папка игры')))
         if not on_global and not bbport_coop.valid_host(self.coop.get('host_ip', '')):
             missing.append((1, _("the host's IP", 'IP хоста')))
-        # Auto scaling needs no level of its own (the game takes its own steps with the team's size); the
-        # public server has no Enemies step (Kaniel 2026-11-05).
-        if (not on_global and self.coop.get('rule_scale') != '1'
-                and 'harder' not in getattr(self, 'coop_picked', {'harder'})):
-            missing.append((2, _('the enemies', 'враги')))
         return missing
 
     def open_coop(self, required=False):
@@ -4811,7 +4629,6 @@ class Launcher:
             self.public_offer.lift()  # the question stays on top until it is answered
 
     def close_coop(self):
-        self.coop_custom_tidy()
         self.coop_flush()
         if self.coop_ready():
             return
@@ -4859,6 +4676,10 @@ class Launcher:
             return
         for key, v in self.coop_vars.items():
             self.coop[key] = v.get().strip()
+        # The map's page names the game folder too: it asks again when the folder changes.
+        if getattr(self, 'map_game_seen', None) != self.coop.get('game'):
+            self.map_game_seen = self.coop.get('game')
+            self.refresh_map()
         try:
             bbport_coop.save_settings(PORT_DIR, self.coop)
         except OSError:
@@ -5282,34 +5103,14 @@ class Launcher:
                 pass  # a full disk or a locked file costs this one copy, not the game
             # No account step (phase 11): the host's server makes the player's account at its first
             # sign-in, and the game's team screen says when it cannot reach the server.
-            root = bbport_coop.view_root(PORT_DIR)
-            if bbport_coop.needs_prepare(PORT_DIR, settings):
-                root, note = bbport_coop.prepare(PORT_DIR, settings, say=lambda text: self.coop_say(_(text)))
-                settings['prepared'] = bbport_coop.prepared_key(settings)
-                self.coop['prepared'] = settings['prepared']
+            def prepared(key):
+                self.coop['prepared'] = key
                 bbport_coop.save_settings(PORT_DIR, self.coop)
-            else:
-                bbport_coop.copy_events(PORT_DIR, root)
-            # A public server's name is looked up once: the link and the HTTP ports go to its address,
-            # as to a host's IP.
-            # A region's directory (https://...) names the shard: the least loaded, or the player's own
-            # (docs/SCALING.md); the shards send the game on by themselves later.
-            if settings.get('server_type') == 'global':
-                settings = bbport_coop.global_game_settings(settings)
-            elif bbport_coop.region_url(settings['host_ip']):
-                settings = bbport_coop.region_settings(settings)
-            else:
-                address = bbport_coop.resolve_host(settings['host_ip'])
-                if not address:
-                    raise RuntimeError(_(bbport_coop.UNKNOWN_SERVER_TEXT).format(settings['host_ip']))
-                # The id for this server: its own when it refused the player's one id (coop_watch_line).
-                account, secret = bbport_coop.player_id_for(settings, settings['host_ip'])
-                settings = dict(settings, host_ip=address, server=settings['host_ip'], account=account,
-                                password=secret, link_key=bbport_coop.link_key_for(settings, settings['host_ip']))
-            user = PORT_DIR / 'user'
-            user.mkdir(parents=True, exist_ok=True)
-            (user / 'host_overrides.custom.json').write_text(bbport_coop.host_overrides(settings['host_ip']),
-                                                              encoding='utf-8')
+            # The same steps Bloodborne.exe and a Steam shortcut take (play_coop_without_window).
+            settings, root, note = bbport_coop.launch_settings(
+                PORT_DIR, settings, say=lambda text: self.coop_say(_(text)), on_prepared=prepared)
+        except bbport_coop.UnknownServer as error:
+            failed = _(bbport_coop.UNKNOWN_SERVER_TEXT).format(error.host)
         except (RuntimeError, OSError, ValueError) as error:
             failed = str(error)
         except Exception as error:  # noqa: BLE001 - 2026-11-05: any other error left PLAY spinning for good
@@ -5390,6 +5191,11 @@ class Launcher:
         tries = getattr(self, 'coop_id_tries', 0)
         what = bbport_coop.id_retry(line, tries)
         if what is None:
+            # Any other refusal: the server's own reason stays in the status line (the game's team
+            # screen has one short line of it, gone with the window).
+            reason = bbport_coop.refusal_reason(line)
+            if reason:
+                self.status.configure(text=_(bbport_coop.REFUSED_TEXT).format(reason), fg=BAD)
             return
         if what == 'retry':
             self.coop_id_tries = tries + 1
@@ -5614,10 +5420,12 @@ class Launcher:
         hint = self.label(holder, '', 'small', MUTED, wraplength=self.px(560), justify='left')
         hint.pack(anchor='w', pady=(self.px(6), 0))
         generation, cap = self.var('frame_generation', 'ini'), self.var('frame_cap', 'app')
+        experimental = self.var('experimental', 'app')  # frame generation runs only with it on
 
         def show_hint(*_args):
-            hint.configure(text=advanced_cap_hint(cap.get(), generation.get(), display_refresh()))
-        for var in (generation, cap):
+            hint.configure(text=advanced_cap_hint(cap.get(), generation.get() and experimental.get(),
+                                                  display_refresh()))
+        for var in (generation, cap, experimental):
             var.trace_add('write', show_hint)
         show_hint()
         self.row(f, _('Frame cap (unlocked mode)', 'Ограничение FPS (режим без ограничения)'), holder,
@@ -6127,11 +5935,7 @@ class Launcher:
                              'Если игра показывает только чёрный экран, обычно это помогает.'), 'small', MUTED).pack(
             side='left', padx=px(12))
         f = self.card(page, _('Performance', 'Производительность'))
-        self.check(f, 'experimental', 'app', _('Experimental features', 'Экспериментальные функции'),
-                   _('Unlocks options that are still being tested and marked (experimental). For now: FSR 4.1.1, and '
-                     'object motion vectors on AMD graphics cards, which can lower the frame rate or draw some objects wrong.',
-                     'Открывает функции, которые ещё проверяются и помечены (экспериментально). Пока это FSR 4.1.1 и '
-                     'векторы движения объектов на видеокартах AMD: они могут снижать FPS или неправильно рисовать объекты.'))
+        self.check(f, 'experimental', 'app', _('Experimental features', 'Экспериментальные функции'), experimental_hint())
         self.row(f, _('Two-stage GPU pipeline', 'Двухстадийный конвейер GPU'), self.choice(f, 'draw_pipe', 'app', DRAW_PIPE),
                  _('20–30% faster; switch it off if the game is unstable.', 'Быстрее на 20–30%; при нестабильности выключите.'))
         self.row(f, _('GPU readbacks', 'Чтение данных GPU'), self.choice(f, 'readbacks', 'app', READBACKS),
@@ -6203,6 +6007,8 @@ class Launcher:
         self.refresh_status()
 
     def refresh_status(self):
+        if getattr(self, 'dlc_show', None):
+            self.dlc_show()
         info = self.coop_game_info() if COOP_INSTALL else game_info(self.var('game_dir', 'app').get())
         if not info:
             game = (_('✗ Choose your Bloodborne folder in Co-op', '✗ Выберите папку Bloodborne в разделе «Кооператив»')
@@ -6555,8 +6361,13 @@ class Launcher:
             return
         self.set_log('')
         log_path = Path(self.app.get('user_dir') or DATA_DIR / 'user') / 'last_run.log'
+        env = game_environment(self.app)
+        # What a game that closes while starting may blame (drain_output): see start_crash_suspects.
+        self.run_started, self.run_up, self.run_stopped = False, False, False
+        self.run_layers_disabled = env.get('VK_LOADER_LAYERS_DISABLE', '')
+        self.run_reshade = RESHADE_LAYER in env.get('VK_INSTANCE_LAYERS', '')
         try:
-            self.process = start_game(run_command(), game_environment(self.app), log_path)
+            self.process = start_game(run_command(), env, log_path)
         except OSError as error:
             self.append(_('Could not start: {}', 'Не удалось запустить: {}').format(error) + '\n')
             self.status.configure(text=_('Could not start: {}', 'Не удалось запустить: {}').format(error), fg=BAD)
@@ -6605,13 +6416,18 @@ class Launcher:
                     self.set_running(False)
                     self.refresh_status()
                     self.coop_game_ended()
+                    self.say_start_crash(item[0])
                 else:
                     self.coop_watch_line(item)
+                    if bbport_support.GAME_STARTING_LINE in item:
+                        self.run_started = True
                     if game_is_up(item):  # mods, patches and shaders are prepared; the window exists
+                        self.run_up = True
                         self.set_running(True)
                         self.status.configure(text=_('The game is running.', 'Игра запущена.'), fg=GOLD)
                         if self.app.get('close_on_play') and not self.close_scheduled:  # both GAME_UP_LINES arrive
                             self.close_scheduled = True
+                            self.coop_release_server()  # the server stays for the game, then stops
                             self.root.after(CLOSE_AFTER_UP_MS, self.root.destroy)  # the game keeps running
                     elif 'restarting through run.py' in item:
                         self.set_running(True, preparing=True)
@@ -6627,7 +6443,26 @@ class Launcher:
             if self.install_proc and self.install_proc.poll() is None:
                 self.install_proc.kill()
         elif self.job:
+            self.run_stopped = True
             self.job.terminate()
+
+    def say_start_crash(self, code):
+        """A game that closed by itself before its window was ready: the overlay and capture tools still
+        hooked into it are named (Discord: Bandicam, HudSight, FPS Monitor... closed the game on every start
+        and nothing told the player which tool to close)."""
+        suspects = bbport_support.start_crash_suspects(
+            code, getattr(self, 'run_started', False), getattr(self, 'run_up', True),
+            getattr(self, 'run_stopped', False), bbport_support.vulkan_layers(),
+            getattr(self, 'run_layers_disabled', ''), getattr(self, 'run_reshade', False))
+        if not suspects:
+            return
+        text = _('The game closed while starting. These overlay or capture tools were hooked into it and may '
+                 'be the cause: {}. Close them or turn them off, then press Play again.',
+                 'Игра закрылась при запуске. К ней были подключены эти оверлеи или программы записи, причина '
+                 'может быть в них: {}. Закройте или отключите их и нажмите «Играть» ещё раз.'
+                 ).format(', '.join(suspects))
+        self.append(text + '\n')
+        self.root.after_idle(lambda: self.messagebox.showwarning('Bloodborne', text))
 
     def append(self, text):
         self.log.configure(state='normal')
@@ -6727,9 +6562,12 @@ class Launcher:
 
         def show(*_args):
             label = var.get().strip()
-            text.configure(text=label or _('Not installed', 'Не установлено'), fg=GOLD if label else DIM)
+            game = self.coop_game_folder() if COOP_INSTALL else self.var('game_dir', 'app').get()
+            said, installed = dlc_text(game, label)
+            text.configure(text=said, fg=GOLD if installed else DIM)
             clear.configure(state='normal' if label else 'disabled')
         var.trace_add('write', show)
+        self.dlc_show = show  # the game folder changed (refresh_status)
         show()
         return holder
 
@@ -7176,6 +7014,13 @@ class Launcher:
             except (OSError, ValueError) as error:
                 self.ui_calls.put(lambda failure=error: self.coop_update_failed(failure))
                 return
+            # the saves as they are, in the Restore saves list, before a setup writes over the install
+            # (red, 2026-11-06: "I updated with the installer and lost our save files"); a backup that
+            # cannot be written (a full disk) does not stop the update, which leaves the saves alone
+            try:
+                bbport_coop.back_up_saves(PORT_DIR, 'before an update', prune=False)
+            except OSError:
+                pass
             self.ui_calls.put(lambda: self.coop_run_setup(setup))
         threading.Thread(target=work, daemon=True).start()
 
@@ -7379,7 +7224,18 @@ class Launcher:
                              'Steam на этом ПК). Игра запускается с настройками, сохранёнными в лаунчере. Прежний '
                              'shortcuts.vdf сохранён как shortcuts.vdf.bak.').format(added, len(done) - added))
 
+    def coop_release_server(self):
+        """The host's server goes with the launcher (Provi 2026-10-21, Omegadash 2026-10-30: it kept running
+        after the launcher was closed), or with the game when that outlives the launcher."""
+        if not COOP_INSTALL:
+            return
+        try:
+            bbport_coop.stop_servers_later(PORT_DIR, stop_servers_command())
+        except Exception:  # never keep the window open over it
+            pass
+
     def close(self):
+        self.coop_release_server()
         try:
             self.coop_flush()
         except Exception:  # never keep the window open over a settings problem
@@ -7580,6 +7436,35 @@ def play_without_window(settings):
         return process.wait()
 
 
+def play_coop_without_window(app):
+    """--play in the co-op release: what PLAY does (bbport_coop.launch_settings), with the saved co-op
+    settings and no window. A start that cannot be made says why in a message box. The host's server is
+    not started here either: Start server in the launcher starts it."""
+    coop = bbport_coop.load_settings(PORT_DIR)
+
+    def prepared(key):
+        coop['prepared'] = key
+        bbport_coop.save_settings(PORT_DIR, coop)
+    try:
+        try:
+            bbport_coop.back_up_saves(PORT_DIR, 'before PLAY')
+        except OSError:
+            pass  # a full disk or a locked file costs this one copy, not the game
+        settings, root, _note = bbport_coop.launch_settings(PORT_DIR, bbport_coop.played_settings(coop),
+                                                            say=lambda _text: None, on_prepared=prepared)
+    except bbport_coop.UnknownServer as error:
+        show_error_box(_(bbport_coop.UNKNOWN_SERVER_TEXT).format(error.host))
+        return 1
+    except (RuntimeError, OSError, ValueError) as error:
+        show_error_box(str(error))
+        return 1
+    log_path = bbport_coop.rotate_logs(PORT_DIR)
+    threading.Thread(target=bbport_coop.send_reports, args=(PORT_DIR, dict(settings)), daemon=True).start()
+    settings = dict(settings, unlocked_fps='1' if bbport_coop.unlocked_fps(app.get('fps_mode')) else '')
+    env = bbport_coop.game_environment(game_environment(app), settings, PORT_DIR, root)
+    return start_game(run_command(), env, log_path).wait()
+
+
 def update_ignore(target):
     """What copying an update over TARGET skips: USER_FILES everywhere and, in bin/reshade, what is
     already installed of ReShade.ini and the presets (players edit them; new presets still arrive)."""
@@ -7720,14 +7605,28 @@ def start_launcher():
             import traceback
             record_startup_failure(traceback.format_exc())
         sys.exit(0)
+    if args[:1] == [bbport_coop.STOP_WHEN_UNUSED]:
+        # Left behind by a launcher that closed while a co-op server ran: the server stops once no game and
+        # no launcher window of this install is left.
+        try:
+            bbport_coop.stop_servers_when_unused(PORT_DIR)
+        except Exception:  # no window to say it in: the log keeps it
+            import traceback
+            record_startup_failure(traceback.format_exc())
+        sys.exit(0)
     settings = load_app_settings()
     LANG = settings.get('ui_language') or windows_language()
     if args[:1] == ['--install-update'] and len(args) == 3:
         sys.exit(install_update(args[1], args[2]))
     if FROZEN and UPDATE_DIR not in PORT_DIR.parents:
         shutil.rmtree(UPDATE_DIR, ignore_errors=True)  # what a finished update left behind
-    # Without a usable game folder there is nothing to play yet: open the launcher instead.
-    if '--play' in args and (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file():
+    # Without a usable game folder there is nothing to play yet: open the launcher instead. The co-op
+    # release plays co-op from Bloodborne.exe and Steam too (LeWhiske 2026-11-05: it started the plain
+    # game, which could not reach the server); unfinished co-op settings open the launcher.
+    if '--play' in args and COOP_INSTALL:
+        if bbport_coop.can_play_unattended(bbport_coop.load_settings(PORT_DIR)):
+            sys.exit(play_coop_without_window(settings))
+    elif '--play' in args and (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file():
         sys.exit(play_without_window(settings))
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays

@@ -52,65 +52,65 @@ class AnswersTests(unittest.TestCase):
         self.assertFalse(coop.valid_name('with space'))
         self.assertTrue(coop.valid_secret('pass_1'))
         self.assertFalse(coop.valid_secret(''))
-        self.assertTrue(coop.valid_harder('off'))
-        self.assertTrue(coop.valid_harder('3,1.5,3'))
-        self.assertFalse(coop.valid_harder('3,1.5'))
 
-    def test_players_set_their_own_enemy_multipliers(self):
-        """Kaniel 2026-10-21: the presets were too specific; a custom setting takes any multipliers the game
-        takes (1 to 10 each, as ParseHarderEnemies), and all 1 is the normal game."""
-        self.assertEqual(coop.harder_value('2', '1.25', '4'), '2,1.25,4')
-        self.assertEqual(coop.harder_value(1, 1, 1), 'off')
-        self.assertEqual(coop.harder_value('25', '0.5', 'x'), '10,1,1', 'held to what the game takes')
-        self.assertEqual(coop.harder_value(1.333, 2, 2), '1.33,2,2')
-        self.assertEqual(coop.harder_value('1,5', ' 2 ', '2,25'), '1.5,2,2.25', 'a decimal comma is a point')
-        for preset in (coop.HARDER_BIT, coop.HARDER_ON, coop.HARDER_MUCH):
-            self.assertTrue(coop.valid_harder(preset), preset)
-        self.assertFalse(coop.valid_harder('11,1,1'), 'the game drops a multiplier above 10')
-        self.assertFalse(coop.valid_harder('0.5,1,1'), 'and one below 1')
-        self.assertFalse(coop.valid_harder('1,1,1'))
-        env = coop.game_environment({}, dict(coop.DEFAULTS, harder='2,1.25,4'), Path('.'), Path('.'))
-        self.assertEqual(env['SHADPS4_BLOODBORNE_HARDER_ENEMIES'], '2,1.25,4')
-
-    def test_host_rules_are_off_until_the_host_turns_them_on(self):
-        """Kaniel 2026-10-25: the host rules (Rot, travel together with its vote, enemies scaling with
-        the team), off by default but the enemies' Auto scaling (Kaniel 2026-11-05); the leader's
-        launcher's are the team's on a local server (the game sends them, 'off' too)."""
-        local = dict(coop.DEFAULTS, rule_scale='')
-        env = coop.game_environment({'SHADPS4_BLOODBORNE_HOST_RULES': 'rot'}, local, Path('.'), Path('.'))
-        self.assertEqual(env['SHADPS4_BLOODBORNE_HOST_RULES'], 'off', 'none on, whatever the env had')
-        self.assertEqual(coop.host_rules_value(local), 'off')
-        self.assertEqual(coop.DEFAULTS['rule_scale'], '1', 'Auto by default')
-        self.assertEqual(coop.host_rules_value(coop.DEFAULTS), 'scale')
-        on = dict(coop.DEFAULTS, rule_rot='1', rule_travel='1', rule_vote='1', rule_scale='1')
-        self.assertEqual(coop.host_rules_value(on), 'rot,travel,vote,scale')
-        env = coop.game_environment({}, on, Path('.'), Path('.'))
-        self.assertEqual(env['SHADPS4_BLOODBORNE_HOST_RULES'], 'rot,travel,vote,scale')
-        self.assertEqual(coop.host_rules_value(dict(local, rule_vote='1')), 'off',
-                         'the vote is a part of travelling together')
-        self.assertEqual(coop.host_rules_value(dict(local, rule_scale='1')), 'scale')
-        # Kaniel 2026-10-28: the boss tempo, Vanilla ('') unless picked; anything else is Vanilla.
-        self.assertEqual(coop.DEFAULTS['rule_tempo'], '')
-        self.assertEqual(coop.host_rules_value(dict(on, rule_tempo='relentless')),
-                         'rot,travel,vote,scale,relentless')
-        self.assertEqual(coop.host_rules_value(dict(local, rule_tempo='aggressive')), 'aggressive')
-        self.assertEqual(coop.host_rules_value(dict(local, rule_tempo='rot')), 'off')
+    def test_the_launcher_has_no_party_settings(self):
+        """Kaniel 2026-11-11 ("fully remove it from launcher, since it's supposed to work in the party menu"):
+        the enemies' strength and the team rules (Rot, travel together and its vote, Auto scaling, the boss
+        tempo) are the team's, its leader's on the game's team screen, on a local server as on the public
+        one: the launcher keeps none and passes none to the game."""
+        for key in coop.OLD_RULE_KEYS:
+            self.assertNotIn(key, coop.DEFAULTS)
+        for name in ('host_rules_value', 'rule_steps', 'valid_harder', 'harder_value', 'HARDER_ON', 'BOSS_TEMPOS'):
+            self.assertFalse(hasattr(coop, name), name)
+        for server in ('local', 'global'):
+            old = dict(coop.DEFAULTS, server_type=server, rule_rot='1', rule_travel='1', rule_scale='1',
+                       rule_tempo='relentless', harder='3,1.5,3')
+            env = coop.game_environment({'SHADPS4_BLOODBORNE_HOST_RULES': 'rot',
+                                         'SHADPS4_BLOODBORNE_HARDER_ENEMIES': '2,2,2'}, old, Path('.'), Path('.'))
+            self.assertNotIn('SHADPS4_BLOODBORNE_HOST_RULES', env, server)
+            self.assertNotIn('SHADPS4_BLOODBORNE_HARDER_ENEMIES', env, server)
         with tempfile.TemporaryDirectory() as folder:
-            coop.save_settings(folder, dict(coop.DEFAULTS, rule_travel='1'))
-            kept = coop.read_settings(folder)
-            self.assertEqual((kept['rule_travel'], kept['rule_rot']), ('1', ''))
+            coop.save_settings(folder, dict(coop.DEFAULTS, rule_travel='1', harder='5,2,5'))
+            kept = json.loads(coop.settings_path(folder).read_text(encoding='utf-8'))
+            self.assertFalse(set(kept) & set(coop.OLD_RULE_KEYS), 'not written any more')
 
-    def test_on_the_public_server_the_team_leader_sets_the_rules_in_game(self):
-        """Kaniel 2026-11-05: on the public server the team rules and the enemies' strength are the
-        team's, set by its leader on the game's team screen (the server's default until then): the
-        launcher passes none of its own to the game."""
-        on = dict(coop.DEFAULTS, server_type='global', rule_rot='1', rule_travel='1', harder='3,1.5,3')
-        env = coop.game_environment({'SHADPS4_BLOODBORNE_HOST_RULES': 'rot',
-                                     'SHADPS4_BLOODBORNE_HARDER_ENEMIES': '2,2,2'}, on, Path('.'), Path('.'))
-        self.assertNotIn('SHADPS4_BLOODBORNE_HOST_RULES', env)
-        self.assertNotIn('SHADPS4_BLOODBORNE_HARDER_ENEMIES', env)
-        self.assertEqual(coop.rule_steps(on), [], 'no Enemies or Travel steps')
-        self.assertEqual(coop.rule_steps(dict(on, server_type='local')), [2, 3])
+    def test_an_older_launchers_rules_become_the_team_screens(self):
+        """The rules a host set in an older launcher are not lost: they go once to the file the game keeps
+        the team screen's in (rot,travel,vote,scale,tempo,hp,damage,poise), and out of coop.json."""
+        base = {'server_type': 'local', 'confirmed': '1', 'rule_scale': '1', 'harder': 'off'}
+        line = coop.old_rules_line
+        self.assertIsNone(line({'server_type': 'local', 'confirmed': '1'}), 'a new coop.json has none')
+        self.assertIsNone(line(base), 'the default (Auto, nothing else) is the server\'s own')
+        self.assertEqual(line(dict(base, rule_rot='1', rule_travel='1', rule_vote='1', rule_tempo='relentless')),
+                         '1,1,1,1,2,0,0,0')
+        self.assertEqual(line(dict(base, rule_vote='1')), None, 'no vote without the trip')
+        self.assertEqual(line(dict(base, rule_scale='', harder='2,1.25,4')), '0,0,0,0,0,2,1.25,4', 'Fixed, Custom')
+        self.assertEqual(line(dict(base, rule_scale='')), '0,0,0,0,0,1,1,1', 'Fixed and Off was the normal game')
+        self.assertEqual(line(dict(base, harder='5,2,5')), '0,0,0,1,0,5,2,5', 'Auto up to its level')
+        self.assertEqual(line(dict(base, rule_scale='', harder='99,1,1')), '0,0,0,0,0,1,1,1')
+        self.assertEqual(line(dict(base, rule_tempo='aggressive')), '0,0,0,1,1,0,0,0')
+        self.assertIsNone(line(dict(base, server_type='global', rule_rot='1')),
+                          'the public server never took the launcher\'s')
+        self.assertIsNone(line(dict(base, confirmed='', rule_rot='1')), 'a setup never finished')
+        with tempfile.TemporaryDirectory() as folder:
+            install = Path(folder)
+            path = coop.settings_path(install)
+            path.parent.mkdir(parents=True)
+            rules = path.parent / coop.TEAM_RULES_FILE
+            old = dict(base, game='G', host_ip='26.1.2.3', rule_rot='1', rule_scale='', harder='3,1.5,3')
+            path.write_text(json.dumps(old), encoding='utf-8')
+            loaded = coop.load_settings(install)
+            self.assertEqual(rules.read_text(encoding='utf-8'), '1,0,0,0,0,3,1.5,3\n')
+            kept = json.loads(path.read_text(encoding='utf-8'))
+            self.assertFalse(set(kept) & set(coop.OLD_RULE_KEYS))
+            self.assertEqual((kept['game'], kept['host_ip'], loaded['game']), ('G', '26.1.2.3', 'G'))
+            # Rules the player set on the team screen since are never replaced by an old file's.
+            rules.write_text('0,0,0,1,0,6,2.5,6\n', encoding='utf-8')
+            path.write_text(json.dumps(old), encoding='utf-8')
+            self.assertFalse(coop.move_old_rules(install))
+            self.assertEqual(rules.read_text(encoding='utf-8'), '0,0,0,1,0,6,2.5,6\n')
+            self.assertFalse(set(json.loads(path.read_text(encoding='utf-8'))) & set(coop.OLD_RULE_KEYS))
+            self.assertFalse(coop.move_old_rules(install), 'once')
 
     def test_missing_answers_are_named(self):
         # No party settings: teams are made in the game (phase 6), so no party name or password.
@@ -171,6 +171,47 @@ class AnswersTests(unittest.TestCase):
         self.assertGreaterEqual(len(fresh['password']), 32)
         self.assertNotEqual(coop.virtual_address(fresh['account']), coop.virtual_address(settings['account']))
 
+    def test_an_id_another_player_has_is_made_again_too(self):
+        # Discord 2026-11-05 ("the server refused this game: sign-in refused: another player has this id",
+        # nothing in the launcher, the player had to ask): the server has this id with another secret (two
+        # friends with one typed name from an old install, a copied or reset install), or another account's
+        # game holds its address (server_link.cpp). Neither passes by waiting: a new id for that server does.
+        head = "GPU [Lib.Net] <Error> p2p_sockets.cpp:1054 OnWelcome: Server link: the server refused this game: "
+        other_secret = head + "sign-in refused: another player has this id (p0123456789abcd)\n"
+        held = head + "another account has this game's address (kaniel): use another account name\n"
+        for line in (other_secret, held):
+            self.assertTrue(coop.address_taken(line), line)
+            self.assertEqual(coop.id_retry(line, 0), 'retry')
+            self.assertEqual(coop.id_retry(line, coop.NEW_ID_TRIES), 'give_up')
+            self.assertIsNone(coop.refusal_reason(line), 'the launcher acts on it: no second message')
+        self.assertFalse(coop.address_taken('sign-in refused: another player has this id (x)\n'),
+                         'only the game\'s own refusal line')
+        self.assertFalse(coop.needs_sign_in(other_secret))
+
+    def test_any_other_refusal_is_said_in_the_launcher(self):
+        # Until now only the game's team screen said why the server refused it (one short line, gone with
+        # the window): the launcher's status line says the server's own reason, its first line.
+        head = "GPU [Lib.Net] <Error> p2p_sockets.cpp:1054 OnWelcome: Server link: the server refused this game: "
+        version = head + "Co-op refused: your game is version 1.3.2, the server's is 1.4.0. Update the game.\n"
+        self.assertEqual(coop.refusal_reason('[Render] frame\n' + version),
+                         "Co-op refused: your game is version 1.3.2, the server's is 1.4.0. Update the game.")
+        self.assertEqual(coop.refusal_reason(head + '  this server is full  \n'), 'this server is full')
+        # The launcher has its own words and deeds for these.
+        self.assertIsNone(coop.refusal_reason(head + 'account: sign in in the launcher first\n'))
+        self.assertIsNone(coop.refusal_reason(head + "address taken: another account's game has this id's "
+                                                     'virtual address; the launcher needs a new id\n'))
+        self.assertIsNone(coop.refusal_reason(head + '\n'))
+        self.assertIsNone(coop.refusal_reason("[Lib.Net] Server link: the server took this game's hello\n"))
+        self.assertEqual(coop.REFUSED_TEXT.count('{}'), 1)
+        import bbport_lang
+        launcher = (Path(__file__).resolve().parents[1] / 'launcher' / 'bbport_launcher_win.py').read_text(encoding='utf-8')
+        self.assertIn('_(bbport_coop.REFUSED_TEXT)', launcher)
+        self.assertIn('bbport_coop.refusal_reason(line)', launcher)
+        for language in ('ru', 'ar', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr', 'zh', 'ja', 'ko'):
+            said = bbport_lang.table(language).get(coop.REFUSED_TEXT)
+            self.assertTrue(said, language)
+            self.assertEqual(said.count('{}'), 1, language)
+
     def test_a_new_id_is_only_for_the_server_that_refused_the_old_one(self):
         # A public server refusing the id's address must not change the id the player's friends' home
         # host knows (their teams and worlds there): the new id is kept for that server only.
@@ -197,7 +238,7 @@ class AnswersTests(unittest.TestCase):
             # An old coop.json (no overrides) reads as before and is written back the same.
             old = {key: '' for key in coop.DEFAULTS}
             old.update(game='G', host_ip='26.1.2.3', account='kaniel', password='pw', role='guest',
-                       p2p_port='auto', harder='off')
+                       p2p_port='auto')
             coop.settings_path(install).parent.mkdir(parents=True)
             coop.settings_path(install).write_text(json.dumps(old, indent=2) + '\n', encoding='utf-8')
             loaded = coop.load_settings(install)
@@ -386,7 +427,7 @@ class AnswersTests(unittest.TestCase):
         self.assertEqual((settings['role'], settings['host_ip'], settings['account'], settings['password']),
                          ('host', '26.1.2.3', 'kaniel', 'pw'))
         self.assertNotIn('party_secret', settings)
-        self.assertEqual(settings['harder'], '3,1.5,3')
+        self.assertNotIn('harder', settings, 'the enemies are the team\'s, set in the game')
 
     def test_settings_are_kept_in_the_user_folder(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -441,7 +482,10 @@ class FindGameTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             make_game(root / 'drive' / 'CUSA00001', title='CUSA00001')
-            self.assertIsNone(coop.search_game(root / 'install', drives=[root / 'drive'], homes=[]))
+            # The install two folders deep: the search also looks beside the install's parent, which
+            # was the PC's own %TEMP% here (a real CUSA03173 left there by another test run was found).
+            install = root / 'Programs' / 'Yharnam Together'
+            self.assertIsNone(coop.search_game(install, drives=[root / 'drive'], homes=[]))
 
 
 @unittest.skipUnless(sys.platform == 'win32', 'folder links (junctions) are Windows')
@@ -628,8 +672,7 @@ class EventFilesTests(unittest.TestCase):
 class PlayTests(unittest.TestCase):
     def test_the_game_starts_as_2_play_started_it(self):
         install = Path('C:/Co-op')
-        settings = dict(coop.DEFAULTS, role='guest', host_ip='26.1.2.3', account='Lisara', password='pw',
-                        harder='3,1.5,3')
+        settings = dict(coop.DEFAULTS, role='guest', host_ip='26.1.2.3', account='Lisara', password='pw')
         env = coop.game_environment({'BB_FPS': 'uncap', 'BB_FPS_LIMIT': '240', 'KEEP': '1',
                                      'SHADPS4_BLOODBORNE_PARTY': 'old:x', 'SHADPS4_BLOODBORNE_PARTY_ROLE': 'host'},
                                     settings, install, Path('C:/Co-op/coop-game'))
@@ -647,10 +690,9 @@ class PlayTests(unittest.TestCase):
         # The party is the team made in the game: no party or role setting reaches it.
         self.assertNotIn('SHADPS4_BLOODBORNE_PARTY', env)
         self.assertNotIn('SHADPS4_BLOODBORNE_PARTY_ROLE', env)
-        self.assertEqual(env['SHADPS4_BLOODBORNE_HARDER_ENEMIES'], '3,1.5,3')
-        self.assertNotIn('SHADPS4_P2P_PORT', env)
-        env = coop.game_environment({}, dict(settings, harder='off', p2p_port='51700'), install, install)
         self.assertNotIn('SHADPS4_BLOODBORNE_HARDER_ENEMIES', env)
+        self.assertNotIn('SHADPS4_P2P_PORT', env)
+        env = coop.game_environment({}, dict(settings, p2p_port='51700'), install, install)
         self.assertEqual(env['SHADPS4_P2P_PORT'], '51700')
 
     def test_teammates_without_the_phantom_glow_is_opt_in(self):
@@ -678,6 +720,17 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(env['BB_ONLINE_UNLOCKED_FPS'], '1')
         env = coop.game_environment({'BB_ONLINE_UNLOCKED_FPS': '1', **launcher}, settings, install, install)
         self.assertEqual(env['BB_FPS'], '60')
+        self.assertNotIn('BB_FPS_LIMIT', env)
+        self.assertNotIn('BB_ONLINE_UNLOCKED_FPS', env)
+
+    def test_the_30_fps_choice_is_kept_in_co_op(self):
+        # Discord 2026-10-26 (Serge, three more players): 30 FPS picked in the launcher did nothing in
+        # co-op, the game ran at 60. A PC that cannot hold 60 runs the fixed 60 FPS step slow, so the
+        # PS4's own 30 FPS mode stays (run.py's frame_mode keeps it online); no frame cap goes with it.
+        install = Path('C:/Co-op')
+        settings = dict(coop.DEFAULTS, host_ip='26.1.2.3', account='Lisara', password='pw')
+        env = coop.game_environment({'BB_FPS': '30', 'BB_FPS_LIMIT': '144'}, settings, install, install)
+        self.assertEqual(env['BB_FPS'], '30')
         self.assertNotIn('BB_FPS_LIMIT', env)
         self.assertNotIn('BB_ONLINE_UNLOCKED_FPS', env)
 
@@ -1014,8 +1067,7 @@ class UpdateTests(unittest.TestCase):
         import bbport_lang
         launcher = Path(__file__).resolve().parents[1] / 'launcher' / 'bbport_launcher_win.py'
         source = launcher.read_text(encoding='utf-8')
-        names = {'build_coop_help', 'coop_help_refresh', 'coop_help_refresh_public', 'coop_router_said',
-                 'build_coop_custom'}
+        names = {'build_coop_help', 'coop_help_refresh', 'coop_help_refresh_public', 'coop_router_said'}
         pieces = [f for f in ast.walk(ast.parse(source)) if isinstance(f, ast.FunctionDef) and f.name in names]
         self.assertEqual({f.name for f in pieces}, names)
         texts = {n.args[0].value for f in pieces for n in ast.walk(f) if isinstance(n, ast.Call)
@@ -1035,24 +1087,50 @@ class UpdateTests(unittest.TestCase):
         if docs.exists():
             self.assertIn('slug: "radmin"', docs.read_text(encoding='utf-8'), 'the page the help links to')
 
-    def test_the_enemy_choices_are_translated_everywhere(self):
-        import ast
+    def test_no_party_setting_is_left_in_the_launcher_or_its_languages(self):
+        """Kaniel 2026-11-11: the Enemies and Travel steps are gone from the launcher, their texts from
+        every language too."""
         import bbport_lang
         launcher = Path(__file__).resolve().parents[1] / 'launcher' / 'bbport_launcher_win.py'
-        tree = ast.parse(launcher.read_text(encoding='utf-8'))
-        choices = next(n.value for n in tree.body if isinstance(n, ast.Assign)
-                       and getattr(n.targets[0], 'id', '') == 'HARDER_CHOICES')
-        texts = [t.elts[1].elts[0].value for t in choices.elts] + ['Enemies (the same for every player)']
-        self.assertIn('Custom', texts)
+        source = launcher.read_text(encoding='utf-8')
+        for word in ('HARDER_CHOICES', 'rule_scale', 'rule_travel', 'rule_rot', 'rule_vote', 'rule_tempo',
+                     "'harder'", 'coop_enemy_mode', 'coop_travel_mode', 'coop_tempo'):
+            self.assertNotIn(word, source, word)
+        texts = ['Enemies', 'Travel', 'Custom', 'Enemy HP ×', 'Death cost (optional)', 'Boss tempo (optional)',
+                 'Travel together', 'Auto: scale with the hunters on the map', 'the enemies',
+                 'Harder: enemy HP ×3, damage ×1.5, poise ×3']
         for language in ('ru', 'ar', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr', 'zh', 'ja', 'ko'):
             table = bbport_lang.table(language)
             for text in texts:
+                self.assertNotIn(text, table, f'{language}: {text}')
+            # The setup's texts that stay say where the rules are now.
+            for text in ("Set co-op up once, in two steps. Everyone uses this same release; the others see your "
+                         "character's name. Enemies and travel are the team leader's, on the game's team screen.",
+                         "Your co-op settings: pick a tab to change it. Enemies and travel are the team "
+                         "leader's, on the game's team screen."):
                 self.assertTrue(table.get(text), f'{language}: {text}')
 
     def test_the_setup_updates_this_install_silently(self):
         command = coop.setup_command(Path('C:/Temp/Setup.exe'), Path('C:/Games/Co-op'))
         self.assertIn('/CLOSEAPPLICATIONS', command)
         self.assertIn(f'/DIR={Path("C:/Games/Co-op")}', command)
+
+    def test_the_update_backs_the_saves_up_first(self):
+        # red, 2026-11-06: "I updated with the installer and lost our save files": the launcher's update
+        # keeps the saves as they were in the Restore saves list before the setup runs
+        source = (Path(__file__).resolve().parents[1] / 'launcher' / 'bbport_launcher_win.py').read_text(encoding='utf-8')
+        update = source.split('def coop_update_failed', 1)[0].rsplit('def work():', 1)[1]
+        self.assertIn('bbport_coop.download_update(', update)
+        backup = update.index("bbport_coop.back_up_saves(PORT_DIR, 'before an update'")
+        self.assertLess(backup, update.index('self.coop_run_setup(setup)'))
+        with tempfile.TemporaryDirectory() as folder:
+            install = Path(folder)
+            save = install / 'user' / 'savedata' / '1' / 'CUSA03173' / 'SPRJ0005' / 'userdata0000'
+            save.parent.mkdir(parents=True)
+            save.write_bytes(b'a save')
+            kept = coop.back_up_saves(install, 'before an update', prune=False)
+            self.assertIsNotNone(kept)
+            self.assertEqual(coop.save_backups(install)[0]['note'], 'before an update')
 
     def test_a_portable_folder_stays_portable(self):
         # Provi 2026-10-30: the portable zip updates with the setup, which then makes no uninstaller or shortcuts

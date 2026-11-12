@@ -37,6 +37,12 @@ TESTED_TITLE = 'CUSA03173'
 # others work as hosts). The Unlock Game Region patch needs no warning since #357.
 UNTESTED_EDITION_TEXT = ('Co-op is tested on the EU edition (CUSA03173) only: {} should work, but it was not '
                          'tested properly. If something goes wrong, send your user\\log folder.')
+# The editions sold with The Old Hunters (Game of the Year, The Old Hunters Edition: US, EU, Japan, Asia):
+# the game is told the add-on is installed, as a console that installed the disc tells it. Dinkles
+# 2026-10-31: a Game of the Year dump showed the DLC as "Not installed". The other editions need the
+# DLC's own package (its licence), as before.
+DLC_EDITIONS = ('CUSA03179', 'CUSA03173', 'CUSA03014', 'CUSA03023')
+OLD_HUNTERS_LABEL = 'SPEXPANSIONDLC03'
 GAME_VERSION = '01.09'
 SHADNET_PORT, WEBAPI_PORT, MATCHING_PORT, BACKEND_PORT = 31313, 31315, 31314, 20443
 GAME_SERVER = 'https://ss4.scej-network.jp:20443'
@@ -46,16 +52,13 @@ DETACHED = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CRE
 # The answers, as 1 - SETUP asked them (FPS is gone: co-op is always the fixed 60 FPS mode). No party
 # settings: the team is made in the game's team screen (phase 6). `role` 'host' runs the co-op server.
 DEFAULTS = {'game': '', 'update': '', 'role': 'guest', 'host_ip': '', 'account': '', 'password': '',
-            'p2p_port': 'auto', 'harder': 'off', 'prepared': '',
+            'p2p_port': 'auto', 'prepared': '',
             # '1': teammates are drawn without the blue phantom glow, on this player's screen only.
             'hide_glow': '',
             # '1' once the player pressed Done in the launcher's co-op settings (they open by themselves until then).
             'confirmed': '',
             # The PC the player id was made on (this_machine()): a copied install makes its own id.
             'machine': '',
-            # Kaniel 2026-10-25: the host rules ('1' on): the leader's are its team's. Off by default but
-            # the enemies' Auto scaling (Kaniel 2026-11-05: "please default to auto").
-            'rule_rot': '', 'rule_travel': '', 'rule_vote': '', 'rule_scale': '1',
             # Kaniel 2026-11-01: '1' shows the game on Discord (off by default).
             'discord_status': '',
             # Kaniel 2026-11-01: 'local' (a host's own server, by its address: as ever) or 'global' (the
@@ -64,14 +67,13 @@ DEFAULTS = {'game': '', 'update': '', 'role': 'guest', 'host_ip': '', 'account':
             # server).
             'server_type': 'local', 'global_name': '', 'global_server': '',
             # Kaniel 2026-11-06: '1' once the player answered the launcher's offer of the public server.
-            'public_asked': '',
-            # Kaniel 2026-10-28: the boss tempo host rule, '' (Vanilla), 'aggressive' or 'relentless'.
-            'rule_tempo': ''}
-BOSS_TEMPOS = ('', 'aggressive', 'relentless')
-HARDER_ON = '3,1.5,3'  # the kit's harder enemies: HP, damage and poise multipliers
-HARDER_BIT, HARDER_MUCH = '1.5,1.25,1.5', '5,2,5'
-# What the game takes for each multiplier (ParseHarderEnemies in the emulator); all 1 is the normal game.
-HARDER_LOWEST, HARDER_HIGHEST = 1.0, 10.0
+            'public_asked': ''}
+# Kaniel 2026-11-11: no party settings here at all ("fully remove it from launcher"): the enemies, Rot,
+# travelling together and the boss tempo are the team's rules, its leader's on the game's team screen
+# (Team settings), kept by the game in TEAM_RULES_FILE of its user folder. What an older launcher kept of
+# them in coop.json (OLD_RULE_KEYS) goes there once (move_old_rules).
+OLD_RULE_KEYS = ('harder', 'rule_rot', 'rule_travel', 'rule_vote', 'rule_scale', 'rule_tempo')
+TEAM_RULES_FILE = 'bloodborne_team_rules.txt'
 # The switch for 'hide_glow' (Kaniel 2026-10-25), in every launcher language.
 NO_GLOW_TEXT = 'Show teammates without the blue phantom glow (on your screen only)'
 
@@ -172,16 +174,12 @@ def use_system_certificates():
     while browsers work. Windows also trusts what antivirus HTTPS scanning or a company proxy installed.
     Certificates are still checked. True when installed; without truststore (a source run on Linux) the
     default stays."""
-    try:
-        import ssl
-        import truststore
-    except ImportError:
-        return False
-    # Amanises 2026-10-29: a frozen launcher where the SSL context cannot be made (FileNotFoundError from
-    # ssl.SSLContext) did not start at all, not even --script: it keeps the default.
-    try:
-        context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    except (OSError, ssl.SSLError):
+    # The same context as the Global server's sign-in (bbport_auth.truststore_context), which also keeps
+    # the default when the SSL context cannot be made (Amanises 2026-10-29: a frozen launcher where
+    # ssl.SSLContext raised FileNotFoundError did not start at all, not even --script).
+    import bbport_auth
+    context = bbport_auth.truststore_context()
+    if context is None:
         return False
     urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHandler(context=context)))
     return True
@@ -285,31 +283,6 @@ def valid_name(value):
 
 def valid_secret(value):
     return bool(re.fullmatch(r'[A-Za-z0-9_-]{1,32}', value or ''))
-
-
-def valid_harder(value):
-    if value == 'off':
-        return True
-    if not re.fullmatch(r'\d+(\.\d+)?,\d+(\.\d+)?,\d+(\.\d+)?', value or ''):
-        return False
-    rates = [float(part) for part in value.split(',')]
-    return all(HARDER_LOWEST <= rate <= HARDER_HIGHEST for rate in rates) and rates != [1.0, 1.0, 1.0]
-
-
-def harder_value(hp, damage, poise):
-    """The setting for the player's own multipliers (Kaniel 2026-10-21: the presets were too specific),
-    each held to what the game takes; 'off' when they make the normal game. A decimal comma counts as a
-    point (players typed 1,5 and got 1: Custom looked unsaved, Kaniel 2026-10-26)."""
-    rates = []
-    for rate in (hp, damage, poise):
-        try:
-            rate = float(str(rate).strip().replace(',', '.'))
-        except (TypeError, ValueError):
-            rate = HARDER_LOWEST
-        rate = min(max(rate, HARDER_LOWEST), HARDER_HIGHEST) if rate == rate else HARDER_LOWEST
-        rates.append(f'{round(rate, 2):g}')
-    value = ','.join(rates)
-    return 'off' if value == '1,1,1' else value
 
 
 def missing(settings):
@@ -552,7 +525,13 @@ def other_key(line):
 # so in console.txt, which the launcher follows), and the refusal of a new id whose virtual address
 # another account has (server link_server.cpp RefusalOf).
 REFUSED_LINE = 'Server link: the server refused this game: '
-ADDRESS_TAKEN = 'address taken:'
+# Refusals a new id for that server ends: its address is another account's (RefusalOf), the server has
+# the id with another secret (two friends with one typed name from an old install, a copied or reset
+# install; Discord 2026-11-05), or another account's game holds its address (server_link.cpp).
+ADDRESS_TAKEN = ('address taken:', 'sign-in refused: another player has this id',
+                 "another account has this game's address")
+# Any other refusal: the launcher's status line says the server's own reason.
+REFUSED_TEXT = 'The co-op server refused this game: {}'
 # New ids made after such refusals before the launcher gives up and says so.
 NEW_ID_TRIES = 3
 NEW_ID_TEXT = 'The server already has a player at your id\'s address: making a new id and starting again…'
@@ -568,6 +547,18 @@ def address_taken(text):
         if found and reason.lstrip().startswith(ADDRESS_TAKEN):
             return True
     return False
+
+
+def refusal_reason(text):
+    """The server's reason (its first line) when the game's log has it refusing this game for something
+    the launcher does nothing about by itself, else None: a new id (address_taken) and a sign-in
+    (needs_sign_in) have their own words."""
+    for line in text.splitlines():
+        _before, found, reason = line.partition(REFUSED_LINE)
+        reason = reason.strip()
+        if found and reason and not reason.startswith(ADDRESS_TAKEN + SIGN_IN_FIRST):
+            return reason
+    return None
 
 
 def id_retry(line, tries):
@@ -609,17 +600,56 @@ def with_own_player_id(settings, machine):
     return settings
 
 
-def host_rules_value(settings):
-    """The game's SHADPS4_BLOODBORNE_HOST_RULES (ParseHostRules): the rules turned on, 'off' for none. The
-    vote is a part of travelling together."""
-    on = lambda key: str(settings.get(key, '')) == '1'
-    words = [word for word, key in (('rot', 'rule_rot'), ('travel', 'rule_travel'), ('scale', 'rule_scale'))
-             if on(key)]
-    if on('rule_travel') and on('rule_vote'):
-        words.insert(words.index('travel') + 1, 'vote')
-    if (tempo := str(settings.get('rule_tempo', ''))) in BOSS_TEMPOS[1:]:
-        words.append(tempo)
-    return ','.join(words) or 'off'
+def old_rules_line(saved):
+    """The team rules an older launcher kept in coop.json (`saved`: the file's own keys), as the game keeps
+    the ones set on its team screen (TEAM_RULES_FILE: rot,travel,vote,scale,tempo,hp,damage,poise; a
+    strength of 0,0,0 is the standard one). None when it kept none, they were never the player's own
+    (the public server never took the launcher's; a setup never finished) or they were the default
+    (Auto and nothing else: the server's own)."""
+    if not any(key in saved for key in OLD_RULE_KEYS):
+        return None
+    if saved.get('server_type') == 'global' or str(saved.get('confirmed', '')) != '1':
+        return None
+    on = lambda key: str(saved.get(key, '')) == '1'
+    scale = str(saved.get('rule_scale', '1')) == '1'
+    harder = str(saved.get('harder', 'off'))
+    rates = None
+    if re.fullmatch(r'\d+(\.\d+)?,\d+(\.\d+)?,\d+(\.\d+)?', harder):
+        rates = [float(part) for part in harder.split(',')]
+        if not all(1.0 <= rate <= 10.0 for rate in rates):
+            rates = None
+    if rates is None:
+        # Fixed with the enemies Off was the normal game; Auto without a level grows to the standard one.
+        rates = [0.0, 0.0, 0.0] if scale else [1.0, 1.0, 1.0]
+    tempo = {'aggressive': 1, 'relentless': 2}.get(str(saved.get('rule_tempo', '')), 0)
+    travel = on('rule_travel')
+    line = ','.join([str(int(on('rule_rot'))), str(int(travel)), str(int(travel and on('rule_vote'))),
+                     str(int(scale)), str(tempo)] + [f'{rate:g}' for rate in rates])
+    return None if line == '0,0,0,1,0,0,0,0' else line
+
+
+def move_old_rules(install):
+    """An older launcher's team rules, from coop.json to where the game keeps the team screen's (never over
+    ones the player set there since); coop.json is written again without them. True when it moved any."""
+    path = settings_path(install)
+    try:
+        saved = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(saved, dict) or not any(key in saved for key in OLD_RULE_KEYS):
+        return False
+    line = old_rules_line(saved)
+    rules = path.parent / TEAM_RULES_FILE
+    moved = False
+    try:
+        if line and not rules.exists():
+            rules.write_text(line + '\n', encoding='utf-8')
+            moved = True
+        path.write_text(json.dumps({key: value for key, value in saved.items() if key not in OLD_RULE_KEYS},
+                                   indent=2) + '\n', encoding='utf-8')
+    except OSError:
+        pass
+    return moved
 
 
 def settings_path(install):
@@ -638,14 +668,14 @@ def from_settings_bat(path):
                      'update': '' if values.get('UPDATE', 'none') == 'none' else values['UPDATE'],
                      'role': values.get('ROLE', 'guest') if values.get('ROLE') in ('host', 'guest') else 'guest',
                      'host_ip': values.get('HOSTIP', ''), 'account': values.get('NPID', ''),
-                     'password': values.get('PASS', ''), 'p2p_port': values.get('P2PPORT', 'auto') or 'auto',
-                     'harder': values.get('HARDER', 'off') or 'off'})
+                     'password': values.get('PASS', ''), 'p2p_port': values.get('P2PPORT', 'auto') or 'auto'})
     return settings
 
 
 def load_settings(install):
     """coop.json, else the old settings.bat beside BLauncher.exe, else the defaults; with the player's
     id of this PC, saved the first time it is made."""
+    move_old_rules(install)
     settings = read_settings(install)
     own = with_own_player_id(dict(settings), this_machine())
     if own != settings:
@@ -721,6 +751,14 @@ def game_version(folder):
     """(title id, app version) of a game folder, or None."""
     sfo = read_sfo(Path(folder) / 'sce_sys' / 'param.sfo')
     return (str(sfo.get('TITLE_ID', '')), str(sfo.get('APP_VER', ''))) if sfo else None
+
+
+def edition_addcont(folder):
+    """The Old Hunters' entitlement label when the game in `folder` is an edition sold with it, else ''."""
+    if not folder:
+        return ''
+    title = (game_version(folder) or ('', ''))[0]
+    return OLD_HUNTERS_LABEL if title in DLC_EDITIONS else ''
 
 
 def untested_warning(title):
@@ -1154,6 +1192,60 @@ def needs_prepare(install, settings):
             or not events_current(install))
 
 
+def can_play_unattended(settings):
+    """Whether Bloodborne.exe or a Steam shortcut may start co-op with no window: the co-op setup was
+    finished once and nothing it asks is missing (on the public server, a sign-in that still holds)."""
+    return settings.get('confirmed') == '1' and not missing(settings)
+
+
+class UnknownServer(RuntimeError):
+    """No address for the server's name `host` (UNKNOWN_SERVER_TEXT, which the launcher says in its language)."""
+
+    def __init__(self, host):
+        super().__init__(UNKNOWN_SERVER_TEXT.format(host))
+        self.host = host
+
+
+def launch_settings(install, settings, say=print, on_prepared=None):
+    """What PLAY does between its button and the game, the same from the window and from Bloodborne.exe
+    or a Steam shortcut (LeWhiske 2026-11-05: started from those, the game had none of this and could
+    not reach the server): the game folder is prepared when it needs it, the server's name becomes its
+    address with this player's id for it, and the game's own server is pointed at the host.
+
+    `settings` are played_settings(); `on_prepared(key)` is told when the folder was prepared, to save
+    it. Returns (the settings the game starts with, the coop-game folder, a note for the player);
+    raises RuntimeError with a message for the player (UnknownServer for a name without an address)."""
+    install = Path(install)
+    settings = dict(settings)
+    root, note = view_root(install), ''
+    if needs_prepare(install, settings):
+        root, note = prepare(install, settings, say=say)
+        settings['prepared'] = prepared_key(settings)
+        if on_prepared:
+            on_prepared(settings['prepared'])
+    else:
+        copy_events(install, root)
+    # A public server's name is looked up once: the link and the HTTP ports go to its address, as to a
+    # host's IP. A region's directory (https://...) names the shard: the least loaded, or the player's
+    # own (docs/SCALING.md); the shards send the game on by themselves later.
+    if settings.get('server_type') == 'global':
+        settings = global_game_settings(settings)
+    elif region_url(settings['host_ip']):
+        settings = region_settings(settings)
+    else:
+        address = resolve_host(settings['host_ip'])
+        if not address:
+            raise UnknownServer(settings['host_ip'])
+        # The id for this server: its own when it refused the player's one id (coop_watch_line).
+        account, secret = player_id_for(settings, settings['host_ip'])
+        settings = dict(settings, host_ip=address, server=settings['host_ip'], account=account,
+                        password=secret, link_key=link_key_for(settings, settings['host_ip']))
+    user = install / 'user'
+    user.mkdir(parents=True, exist_ok=True)
+    (user / 'host_overrides.custom.json').write_text(host_overrides(settings['host_ip']), encoding='utf-8')
+    return settings, root, note
+
+
 def host_overrides(host_ip):
     """user\\host_overrides.custom.json: the game's own server is the host's backend."""
     return json.dumps({GAME_SERVER: f'http://{host_ip}:{BACKEND_PORT}'}, indent=2) + '\n'
@@ -1344,6 +1436,9 @@ def game_environment(env, settings, install, root):
         'SHADPS4_BLOODBORNE_SEAMLESS_COOP': '1',
         'SHADPS4_BLOODBORNE_RE_TRACE': '0',
     })
+    # An edition sold with The Old Hunters has it; the player's own DLC package (the launcher's label) wins.
+    if not env.get('BB_ADDCONT', '').strip() and edition_addcont(root / 'CUSA03173'):
+        env['BB_ADDCONT'] = edition_addcont(root / 'CUSA03173')
     # The server's key, when one is known for it (link_key_for); else the game trusts the first one.
     env.pop('BB_SHADNET_SERVER_KEY', None)
     if valid_link_key(settings.get('link_key', '')):
@@ -1354,39 +1449,31 @@ def game_environment(env, settings, install, root):
     # Co-op is the fixed 60 FPS mode for everyone (a host above 60 made the guests see everyone
     # freeze and fly): no frame cap from the launcher. The opt-in unlocked frame rate keeps the
     # launcher's mode and cap (settings 'unlocked_fps' '1': the launcher picked Unlocked or 90,
-    # unlocked_fps); run.py then caps it and paces the game's packets.
+    # unlocked_fps); run.py then caps it and paces the game's packets. The PS4's own 30 FPS mode
+    # stays when picked (Discord 2026-10-26: it did nothing, the game ran at 60): a PC that cannot
+    # hold 60 plays the fixed 60 FPS step in slow motion.
     env.pop('BB_ONLINE_UNLOCKED_FPS', None)
     if settings.get('unlocked_fps') == '1':
         env['BB_FPS'] = launcher_fps
         env['BB_ONLINE_UNLOCKED_FPS'] = '1'
     else:
         env.pop('BB_FPS_LIMIT', None)
+        if launcher_fps == '30':
+            env['BB_FPS'] = '30'
     for key in ('SHADPS4_P2P_PORT', 'SHADPS4_BLOODBORNE_HARDER_ENEMIES', 'SHADPS4_BLOODBORNE_PARTY_DEATH',
                 'BB_COMMUNITY_SERVER', 'SHADPS4_BLOODBORNE_HOST_RULES',
                 'SHADPS4_BLOODBORNE_NO_PHANTOM_GLOW'):
         env.pop(key, None)
-    # Kaniel 2026-11-05: on the public server the team's rules and enemy strength are its leader's, set
-    # on the game's team screen (the server's default until then): none of this launcher's. On a local
-    # server this launcher's always go ('off' too): the team its player leads starts with them.
-    local = rule_steps(settings) != []
-    if local:
-        env['SHADPS4_BLOODBORNE_HOST_RULES'] = host_rules_value(settings)
+    # Kaniel 2026-11-11: no team rules or enemy strength from here on any server: the team's are its
+    # leader's, set on the game's team screen and kept by the game (TEAM_RULES_FILE); a setting left in the
+    # environment is taken out above.
     # Each player's own look (#467), on any server.
     if settings.get('hide_glow') == '1':
         env['SHADPS4_BLOODBORNE_NO_PHANTOM_GLOW'] = '1'
     port = str(settings.get('p2p_port', 'auto'))
     if port not in ('auto', '', '51610', '51611'):
         env['SHADPS4_P2P_PORT'] = port
-    harder = str(settings.get('harder', 'off'))
-    if local and harder != 'off' and valid_harder(harder):
-        env['SHADPS4_BLOODBORNE_HARDER_ENEMIES'] = harder
     return discord_environment(env, settings)
-
-
-def rule_steps(settings):
-    """The co-op page's steps with the team rules (2 Enemies, 3 Travel): a local server's only. On the
-    public server the team's leader sets them on the game's team screen (Kaniel 2026-11-05)."""
-    return [] if settings.get('server_type') == 'global' else [2, 3]
 
 
 REPORTS_SENT = 'reports-sent.json'
@@ -1561,29 +1648,41 @@ def console_text(data):
     return data.decode('latin-1')
 
 
-def our_processes(install):
-    """(pid, name, command line) of this install's shadnet (its watchdog too) and backend."""
-    install = str(Path(install).resolve()).lower()
+def process_rows():
+    """(pid, name, executable path, command line) of every process that may be this release's: the
+    co-op server, the backend, the launcher in each of its roles, and the game. None when Windows
+    could not be asked."""
     # UTF-8 out, so an install path in any language comes back as it is (not through the OEM code page).
     script = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
               "Get-CimInstance Win32_Process -Filter \"Name='shadnet.exe' OR Name='BLauncher.exe' OR "
-              "Name='python.exe' OR Name='pythonw.exe'\" | ForEach-Object { \"$($_.ProcessId)|$($_.Name)|"
-              "$($_.ExecutablePath)|$($_.CommandLine)\" }")
+              "Name='bb-probe.exe' OR Name='python.exe' OR Name='pythonw.exe'\" | ForEach-Object { "
+              "\"$($_.ProcessId)|$($_.Name)|$($_.ExecutablePath)|$($_.CommandLine)\" }")
     try:
         out = console_text(subprocess.run(['powershell', '-NoProfile', '-Command', script], capture_output=True,
                                           timeout=20, creationflags=NO_WINDOW).stdout)
     except (OSError, subprocess.TimeoutExpired):
-        return []
-    found = []
+        return None
+    rows = []
     for line in out.splitlines():
         parts = line.split('|', 3)
-        if len(parts) < 4:
-            continue
-        pid, name, path, command = parts
+        if len(parts) == 4 and parts[0].strip().isdigit():
+            rows.append((int(parts[0]), parts[1], parts[2], parts[3]))
+    return rows
+
+
+def our_processes(install, rows=None):
+    """(pid, name, command line) of this install's shadnet (its watchdog too) and backend, and of the
+    launchers waiting to stop them (stop_servers_when_unused), never this process."""
+    install = str(Path(install).resolve()).lower() if rows is None else str(install).lower()
+    found = []
+    for pid, name, path, command in (process_rows() or []) if rows is None else rows:
         if name.lower() == 'shadnet.exe' and path.lower().startswith(install):
-            found.append((int(pid), name, command))
+            found.append((pid, name, command))
         elif 'bb_dummy_server.py' in command and install in command.lower():
-            found.append((int(pid), name, command))
+            found.append((pid, name, command))
+        elif (name.lower() == 'blauncher.exe' and path.lower().startswith(install) and STOP_WHEN_UNUSED in command
+              and pid != os.getpid()):
+            found.append((pid, name, command))
     return found
 
 
@@ -1598,6 +1697,108 @@ def stop_servers(install):
         subprocess.run(['taskkill', '/PID', str(pid), '/F'], capture_output=True, creationflags=NO_WINDOW)
         stopped += 1
     return stopped
+
+
+# --- the server goes with the launcher ------------------------------------------------------------
+# Provi 2026-10-21, Omegadash 2026-10-30: the host's server kept running after the launcher was closed.
+# A closing launcher leaves BLauncher.exe --coop-stop-servers behind when a server runs: it waits until
+# no game and no launcher window of this install is left (the game outlives the launcher with "Close
+# the launcher when the game starts", or when the player closes the window while playing), then stops
+# the server as Stop server does.
+STOP_WHEN_UNUSED = '--coop-stop-servers'
+# The launcher's roles that play nothing and show no window: they never keep the server.
+IDLE_ROLES = ('--script', STOP_WHEN_UNUSED, '--coop-uninstall', '--install-update')
+
+
+def install_users(rows, install, own_pid=None):
+    """The pids that still use this install's server: its game (run.py's launch and bb-probe.exe) and
+    its launcher windows (Bloodborne.exe's --play too)."""
+    folder = str(install).lower().rstrip('\\/')
+    users = []
+    for pid, name, path, command in rows:
+        inside = path.lower().startswith((folder + '\\', folder + '/'))
+        if not inside or pid == own_pid:
+            continue
+        if name.lower() == 'bb-probe.exe':
+            users.append(pid)
+        elif name.lower() == 'blauncher.exe' and not any(role in command for role in IDLE_ROLES):
+            users.append(pid)
+    return users
+
+
+def pid_alive(pid):
+    """False once the process `pid` is known to be gone."""
+    if os.name != 'nt':
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+        return True
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    SYNCHRONIZE, WAIT_TIMEOUT, ACCESS_DENIED = 0x00100000, 0x102, 5
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+    if not handle:
+        return kernel32.GetLastError() == ACCESS_DENIED
+    try:
+        return kernel32.WaitForSingleObject(ctypes.c_void_p(handle), 0) == WAIT_TIMEOUT
+    finally:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+
+
+def close_router_ports(install):
+    """What Stop server does for the router: the ports Start server opened there are closed again."""
+    if wants_router(read_settings(install).get('host_ip', '')):
+        import bbport_upnp
+        bbport_upnp.close_ports()
+
+
+# How often the watcher looks at the processes it waits for (a handle check, no load), and how many
+# times in a row Windows may fail to list the processes before it gives up.
+UNUSED_POLL_S = 3.0
+SCAN_TRIES = 5
+
+
+def stop_servers_when_unused(install, scan=process_rows, alive=pid_alive, sleep=time.sleep, stop=None,
+                             own_pid=None, router=None):
+    """BLauncher.exe --coop-stop-servers: waits until nothing uses this install's server, then stops it;
+    returns how many processes it stopped. When Windows cannot say what runs, the server stays: a
+    server left running costs less than a session cut off."""
+    own_pid = os.getpid() if own_pid is None else own_pid
+    failures = 0
+    sleep(UNUSED_POLL_S)  # the launcher that started this is still closing
+    while True:
+        rows = scan()
+        if rows is None:
+            failures += 1
+            if failures >= SCAN_TRIES:
+                return 0
+            sleep(UNUSED_POLL_S)
+            continue
+        failures = 0
+        users = install_users(rows, install, own_pid)
+        if not users:
+            break
+        while any(alive(pid) for pid in users):
+            sleep(UNUSED_POLL_S)
+    try:
+        router() if router else close_router_ports(install)
+    except Exception:  # noqa: BLE001 - the forwards stay until the next Stop; the server stops regardless
+        pass
+    return (stop or stop_servers)(install)
+
+
+def stop_servers_later(install, command):
+    """Leaves `command` (this launcher as --coop-stop-servers) behind when a co-op server runs on this
+    PC; False when none does."""
+    if not servers_running():
+        return False
+    subprocess.Popen(command, cwd=str(install), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, creationflags=NO_WINDOW | DETACHED)
+    return True
 
 
 # --- the uninstall (setup.iss [UninstallRun]: BLauncher.exe --coop-uninstall) --------------------

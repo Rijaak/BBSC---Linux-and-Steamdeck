@@ -26,6 +26,7 @@
 #include "../bbcoop.h"
 #include "../bbgpu.h"
 #include "bbport_game_art.h"
+#include "bbport_game_menu.h"
 #include "bbport_prompts.h"
 #include "bbport_coop_art.h"
 #include "bbport_key_guide.h"
@@ -1940,15 +1941,17 @@ void UpscalerTab() {
              "Точное движение анимированных объектов: одежда и оружие меньше рассыпаются в "
              "движении. Применяется после перезапуска игры."),
            upscaler_on);
-    Toggle("frame_generation", T("Frame generation", "Генерация кадров"), s.frame_generation,
-           T("Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, DLSS "
-             "makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and uses some "
-             "video memory; best from 60 FPS. Off by default.",
-             "Кадры между кадрами игры: FSR 3.1 удваивает частоту кадров на любой видеокарте, DLSS "
-             "делает до трёх на GeForce RTX 50 (4x). Немного добавляет задержки ввода и занимает "
-             "видеопамять; лучше от 60 FPS. По умолчанию выключено."),
-           upscaler_on);
-    FrameGenRows(upscaler_on && s.frame_generation);
+    if (!BbSettings::FrameGenHidden()) { // hidden until it works, unless the launcher offers it
+        Toggle("frame_generation", T("Frame generation", "Генерация кадров"), s.frame_generation,
+               T("Frames made between the game's own: FSR 3.1 doubles the frame rate on any GPU, "
+                 "DLSS makes up to three on a GeForce RTX 50 (4x). Adds a little input lag and "
+                 "uses some video memory; best from 60 FPS. Off by default.",
+                 "Кадры между кадрами игры: FSR 3.1 удваивает частоту кадров на любой видеокарте, "
+                 "DLSS делает до трёх на GeForce RTX 50 (4x). Немного добавляет задержки ввода и "
+                 "занимает видеопамять; лучше от 60 FPS. По умолчанию выключено."),
+               upscaler_on);
+        FrameGenRows(upscaler_on && s.frame_generation);
+    }
     if (BbSettings::IsFsr4(s.upscaler)) {
         Toggle("fsr4_exposure", T("FSR 4: auto exposure", "FSR 4: автоэкспозиция"), s.fsr4_auto_exposure,
                T("The FSR 4 network normalises colour by exposure and uses it to decide when to "
@@ -3404,14 +3407,16 @@ void DrawDuelSetup(ImDrawList* draw, ImVec2 win, ImVec2 size) {
 
 /// Kaniel 2026-10-29 ("too overcrowded"): how the team is joined, invaders and the death mode, one
 /// choice each for the whole team, on their own page behind the settings button in the screen's top
-/// right corner (Triangle opens it too). Its leader changes them, the others see them; the host
-/// rules (the leader's launcher's Co-op settings) are listed under them.
+/// right corner (Triangle opens it too). Its leader changes them, the others see them.
 /// Kaniel 2026-11-05: the team rules on the settings page, as the lobby has them (the team's) or
 /// as its leader just set them.
+/// Kaniel 2026-11-11: this page is the one place for them (the launcher has none): the game keeps
+/// what the leader sets for its next start (the game's SetOwnRules).
 struct TeamRules {
     bool scale = true, rot = false, travel = false, vote = false;
     int tempo = 0;
     float hp = 3.0f, damage = 1.5f, poise = 3.0f;
+    bool friendly_fire = false; // Kaniel 2026-11-11
     bool operator==(const TeamRules&) const = default;
 };
 
@@ -3423,7 +3428,8 @@ TeamRules LobbyRules() {
                      .tempo = lobby.rule_tempo,
                      .hp = lobby.rule_hp,
                      .damage = lobby.rule_damage,
-                     .poise = lobby.rule_poise};
+                     .poise = lobby.rule_poise,
+                     .friendly_fire = lobby.rule_friendly_fire != 0};
 }
 
 /// The strength row's steps (HP, damage, poise): each press the next, the standard in the middle.
@@ -3448,30 +3454,54 @@ int StrengthIndex(const TeamRules& rules) {
     return -1;
 }
 
-std::string StrengthText(const TeamRules& rules) {
-    const int index = StrengthIndex(rules);
+std::string StrengthText(const TeamRules& rules, bool custom) {
+    const int index = custom ? -1 : StrengthIndex(rules);
     char text[160];
-    std::snprintf(text, sizeof(text), "%s%sHP x%g, %s x%g, %s x%g%s",
-                  index < 0 ? "" : T(Strengths[index].en, Strengths[index].ru), index < 0 ? "" : "  (",
+    std::snprintf(text, sizeof(text), "%s  (HP x%g, %s x%g, %s x%g)",
+                  index < 0 ? T("Custom", "Свои значения") : T(Strengths[index].en, Strengths[index].ru),
                   double(rules.hp), T("damage", "урон"), double(rules.damage), T("poise", "стойкость"),
-                  double(rules.poise), index < 0 ? "" : ")");
-    return text; // without a step's name: a server's own default or a launcher's custom one
+                  double(rules.poise));
+    return text; // Custom: the leader's own numbers, a server's own default or an older launcher's
 }
 
-void NextStrength(TeamRules& rules) {
-    const int index = StrengthIndex(rules);
-    const Strength& next = Strengths[index < 0 ? 2 : (index + 1) % int(std::size(Strengths))];
+/// Kaniel 2026-11-11: the launcher's Custom strength is here now: after the last step the row says
+/// Custom and three rows under it set HP, damage and poise by themselves. `custom`: the leader
+/// picked Custom (its numbers may still be a step's); numbers that are no step's are Custom too.
+/// True when the numbers changed (Custom keeps the last step's until its rows change them).
+bool NextStrength(TeamRules& rules, bool& custom) {
+    const int index = custom ? -1 : StrengthIndex(rules);
+    if (index == int(std::size(Strengths)) - 1) {
+        custom = true;
+        return false;
+    }
+    custom = false;
+    const Strength& next = Strengths[index < 0 ? 0 : index + 1];
+    const bool changed = rules.hp != next.hp || rules.damage != next.damage || rules.poise != next.poise;
     rules.hp = next.hp;
     rules.damage = next.damage;
     rules.poise = next.poise;
+    return changed;
+}
+
+/// A Custom row's values, each press the next (the first again after the last; a number between
+/// two, an older launcher's, goes to the next one up).
+constexpr float CustomRates[] = {1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f, 10.0f};
+
+float NextCustomRate(float rate) {
+    for (const float step : CustomRates) {
+        if (step > rate) {
+            return step;
+        }
+    }
+    return CustomRates[0];
 }
 
 /// The text bbcoop_lobby_request(BBCOOP_TEAM_RULES) takes (the game's ScreenRulesText).
 std::string ScreenRules(const TeamRules& rules) {
     char text[96];
-    std::snprintf(text, sizeof(text), "%d,%d,%d,%d,%d,%g,%g,%g", rules.rot ? 1 : 0, rules.travel ? 1 : 0,
+    std::snprintf(text, sizeof(text), "%d,%d,%d,%d,%d,%g,%g,%g%s", rules.rot ? 1 : 0, rules.travel ? 1 : 0,
                   rules.travel && rules.vote ? 1 : 0, rules.scale ? 1 : 0, rules.tempo, double(rules.hp),
-                  double(rules.damage), double(rules.poise));
+                  double(rules.damage), double(rules.poise), rules.friendly_fire ? ",1" : "");
     return text;
 }
 
@@ -3482,11 +3512,15 @@ struct SettingsPage {
     int join = -1, invaders = -1, deaths = -1;
     std::optional<TeamRules> rules;
     double pressed_at = 0.0;
+    // The leader picked Custom on the strength row: its three rows show while it is on (and
+    // whenever the team's numbers are no step's).
+    bool custom = false;
 };
 SettingsPage settings;
 
 void OpenSettings() {
     settings.open = true;
+    settings.custom = false; // Custom shows again by itself when the team's numbers are no step's
     focus.id = "set_join";
     focus.activate = false; // the press that opened it is used up
     focus.page_switched = true;
@@ -3593,11 +3627,25 @@ void DrawSettings(ImDrawList* draw, ImVec2 win, ImVec2 size) {
     const int invaders = settings.invaders >= 0 ? settings.invaders : invaders_now;
     const int deaths = settings.deaths >= 0 ? settings.deaths : deaths_now;
 
+    // Kaniel 2026-11-05: the team rules (were the leader's launcher's): the enemies' strength, Rot,
+    // travelling together and the boss tempo, its leader's to change here, the others' to read.
+    TeamRules rules = settings.rules && now - settings.pressed_at <= 2.0 ? *settings.rules : LobbyRules();
+    if (settings.rules && (now - settings.pressed_at > 2.0 || *settings.rules == LobbyRules())) {
+        settings.rules.reset();
+    }
+    const bool custom = settings.custom || StrengthIndex(rules) < 0;
+
     ImGui::PushFont(MenuArt::Font(), 22.0f);
     // Kaniel 2026-11-05: the team rules are here too, so the rows are lower.
-    const ImVec2 row(std::min(S(820.0f), size.x - S(160.0f)), S(50.0f));
-    const float rx = mid - row.x * 0.5f, gap = S(8.0f);
+    // Kaniel 2026-11-11: Custom's three rows and friendly fire make twelve: lower still where they
+    // would put the
+    // focused row's meaning onto the key guide (720p; BbPartyLayout::TeamSettingsRows).
     float y = win.y + S(130.0f) + under;
+    const float guide_top = win.y + size.y - S(BbKeyGuide::BottomClearance + 27.0f);
+    const BbPartyLayout::SettingsRows fit =
+        BbPartyLayout::TeamSettingsRows(custom ? 12 : 9, (guide_top - y) / base_scale);
+    const ImVec2 row(std::min(S(820.0f), size.x - S(160.0f)), S(fit.height));
+    const float rx = mid - row.x * 0.5f, gap = S(fit.gap);
     // Amanises 2026-10-25, open teams: how the team is joined, each press the next way (by invite
     // only, listed with its leader taking who asks, listed for anyone to join).
     const char* join_text = join == BBCOOP_JOIN_OPEN  ? T("Open to all", "Открыт всем")
@@ -3631,12 +3679,6 @@ void DrawSettings(ImDrawList* draw, ImVec2 win, ImVec2 size) {
         bbcoop_lobby_request(BBCOOP_TEAM_DEATH_MODE, settings.deaths ? "1" : "0");
     }
     y += row.y + gap;
-    // Kaniel 2026-11-05: the team rules (were the leader's launcher's): the enemies' strength, Rot,
-    // travelling together and the boss tempo, its leader's to change here, the others' to read.
-    TeamRules rules = settings.rules && now - settings.pressed_at <= 2.0 ? *settings.rules : LobbyRules();
-    if (settings.rules && (now - settings.pressed_at > 2.0 || *settings.rules == LobbyRules())) {
-        settings.rules.reset();
-    }
     bool changed = false;
     if (SettingRow(draw, "rule_enemies", T("Enemies", "Враги"),
                    rules.scale ? T("Auto: stronger with each hunter", "Авто: сильнее с каждым охотником")
@@ -3646,13 +3688,33 @@ void DrawSettings(ImDrawList* draw, ImVec2 win, ImVec2 size) {
         changed = true;
     }
     y += row.y + gap;
-    const std::string strength = StrengthText(rules);
+    const std::string strength = StrengthText(rules, custom);
     if (SettingRow(draw, "rule_strength", T("Enemy strength", "Сила врагов"), strength.c_str(), ImVec2(rx, y), row,
                    leads)) {
-        NextStrength(rules);
-        changed = true;
+        settings.custom = custom;
+        changed |= NextStrength(rules, settings.custom);
     }
     y += row.y + gap;
+    // Kaniel 2026-11-11: Custom's own numbers (the launcher's Custom fields were here before).
+    if (custom) {
+        const struct {
+            const char* id;
+            const char* name;
+            float* rate;
+        } rates[] = {{"rule_hp", T("Enemy HP", "HP врагов"), &rules.hp},
+                     {"rule_damage", T("Enemy damage", "Урон врагов"), &rules.damage},
+                     {"rule_poise", T("Enemy poise", "Стойкость врагов"), &rules.poise}};
+        for (const auto& rate : rates) {
+            char value[24];
+            std::snprintf(value, sizeof(value), "x%g", double(*rate.rate));
+            if (SettingRow(draw, rate.id, rate.name, value, ImVec2(rx, y), row, leads)) {
+                *rate.rate = NextCustomRate(*rate.rate);
+                settings.custom = true; // stays Custom when the numbers pass a step's
+                changed = true;
+            }
+            y += row.y + gap;
+        }
+    }
     if (SettingRow(draw, "rule_rot", T("Rot", "Гниль"), rules.rot ? T("On", "Вкл.") : T("Off", "Выкл."),
                    ImVec2(rx, y), row, leads)) {
         rules.rot = !rules.rot;
@@ -3678,12 +3740,19 @@ void DrawSettings(ImDrawList* draw, ImVec2 win, ImVec2 size) {
         rules.tempo = (rules.tempo + 1) % 3;
         changed = true;
     }
+    y += row.y + gap;
+    // Kaniel 2026-11-11: friendly fire, for a harder hunt (no duel: the strikes just land).
+    if (SettingRow(draw, "rule_friendly", T("Friendly fire", "Огонь по своим"),
+                   rules.friendly_fire ? T("On", "Вкл.") : T("Off", "Выкл."), ImVec2(rx, y), row, leads)) {
+        rules.friendly_fire = !rules.friendly_fire;
+        changed = true;
+    }
     if (changed) {
         settings.rules = rules;
         settings.pressed_at = now;
         bbcoop_lobby_request(BBCOOP_TEAM_RULES, ScreenRules(rules).c_str());
     }
-    y += row.y + S(20.0f);
+    y += row.y + S(BbPartyLayout::SettingsRowsUnder);
     ImGui::PopFont();
 
     // What the focused row means, then the host rules.
@@ -3704,7 +3773,8 @@ void DrawSettings(ImDrawList* draw, ImVec2 win, ImVec2 size) {
                                 "up to the strength below for a full team. Fixed: the strength below at all times.",
                                 "Авто: обычные враги для одного охотника, сильнее с каждым союзником на той же карте, "
                                 "до силы ниже для полной команды. Постоянно: сила ниже всегда.")
-                        : focus.id == "rule_strength"
+                        : focus.id == "rule_strength" || focus.id == "rule_hp" || focus.id == "rule_damage" ||
+                                  focus.id == "rule_poise"
                             ? T("The enemies' HP, damage and poise, times the game's own: the same in every "
                                 "teammate's game.",
                                 "HP, урон и стойкость врагов, во столько раз больше обычных: одинаково в игре "
@@ -3722,6 +3792,11 @@ void DrawSettings(ImDrawList* draw, ImVec2 win, ImVec2 size) {
                         : focus.id == "rule_tempo"
                             ? T("Bosses rest less between attacks and turn faster.",
                                 "Боссы меньше отдыхают между атаками и быстрее поворачиваются.")
+                        : focus.id == "rule_friendly"
+                            ? T("For a harder hunt: teammates' attacks hurt each other at all times. A teammate's "
+                                "killing blow counts as any other death.",
+                                "Для более трудной охоты: атаки союзников всегда ранят друг друга. Смертельный удар "
+                                "союзника считается обычной смертью.")
                             : "";
     if (about[0]) {
         WrappedText(draw, ImVec2(rx, y), row.x, Plain(0.8f), about);
@@ -4332,7 +4407,19 @@ void Screen() {
     }
     ImGui::PushFont(MenuArt::Font(), 20.0f);
     std::string status;
-    if (!lobby.signed_in) {
+    // Players' reports (Discord, 1.0.0 to 1.3.x): with the server out of reach this line said
+    // "Reaching..." for ever (and the game "not signed in to PlayStation Network"). The reason
+    // the sign-in failed, with the server's address, and under it what to check.
+    BbGameMenu::SignInWords sign_in;
+    const bool sign_in_failed = !lobby.signed_in && BbGameMenu::SignInNotice(sign_in, false);
+    // A server's refusal is the notice line's already (at the bottom): up here only what to check,
+    // not "Reaching..." for ever.
+    const bool reason_below = sign_in_failed && lobby.notice[0];
+    if (sign_in_failed && !reason_below) {
+        status = sign_in.what;
+    } else if (reason_below) {
+        status.clear();
+    } else if (!lobby.signed_in) {
         status = T("Reaching the co-op server...", "Подключение к кооп-серверу...");
     } else if (!lobby.in_team) {
         status = T("Not in a team: create one or accept an invitation",
@@ -4346,9 +4433,24 @@ void Screen() {
         }
     }
     ts = ImGui::CalcTextSize(status.c_str());
-    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + S(MenuArt::Has(MenuArt::HeaderOrnament) ? 102.0f : 84.0f)),
-                  Gold(0.85f), status.c_str());
+    const float status_y = win.y + S(MenuArt::Has(MenuArt::HeaderOrnament) ? 102.0f : 84.0f);
+    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, status_y),
+                  sign_in_failed ? ImU32(IM_COL32(220, 150, 110, 255)) : Gold(0.85f), status.c_str());
     ImGui::PopFont();
+    if (sign_in_failed) {
+        // The longest languages' line (Italian, Spanish: 145 letters) on a narrow window (4:3):
+        // smaller, never wider than the window.
+        ImGui::PushFont(MenuArt::Font(), 17.0f);
+        ImVec2 cs = ImGui::CalcTextSize(sign_in.check.c_str());
+        if (const float room = size.x - S(48.0f); cs.x > room && cs.x > 0.0f) {
+            ImGui::PopFont();
+            ImGui::PushFont(MenuArt::Font(), 17.0f * room / cs.x);
+            cs = ImGui::CalcTextSize(sign_in.check.c_str());
+        }
+        draw->AddText(ImVec2(win.x + (size.x - cs.x) * 0.5f, status_y + (reason_below ? 0.0f : S(24.0f))),
+                      Plain(0.8f), sign_in.check.c_str());
+        ImGui::PopFont();
+    }
 
     // The five places (four before teams of five).
     const float card_w = S(BbPartyLayout::TeamCardWidth), card_h = S(270.0f), gap = S(BbPartyLayout::TeamGap);
