@@ -2,7 +2,7 @@
 
 ## Add to Steam: off on Linux (since 1.4.0.1)
 
-**Status for 1.4.0.1 (playtest pre-release):** the button stays off, so it cannot touch anyone's
+**Status for 1.5.0.1 (playtest pre-release), as for 1.4.0.1:** the button stays off, so it cannot touch anyone's
 shortcuts; to be resolved (tested on a Deck and switched back on) before a full release.
 
 **Status:** the launcher's Add to Steam button is disabled on Linux. Players add `run-game.sh` by hand
@@ -34,7 +34,7 @@ every entry and is still `-rwxr-xr-x`, then start Steam and check the library. T
 `steam_button.configure(state='disabled')` block in `bbport_launcher_win.py` (Saves and shortcuts card) and
 the README note.
 
-## Joining a team: not yet tested on Linux (1.4.0.1)
+## Joining a team: not yet tested on Linux (1.5.0.1)
 
 Global sign-in, the server connection and the co-op code start on a Steam Deck (checked: the party HUD
 draws from the co-op code). Joining or hosting a team with another player has not succeeded yet in
@@ -46,15 +46,30 @@ the full co-op log).
 On the public server co-op runs the game's fixed 60 FPS step whatever the Frame rate setting says
 (30 included), so all players move at the same speed; a Steam Deck does not hold 60 everywhere.
 Settings > Display & FPS: Frame rate Unlocked with Frame cap (unlocked mode) 30 FPS keeps 30 in co-op
-(30 is in the launcher's list after 1.4.0.1; in 1.4.0.1 choose 30 in the game's own menu, its FPS limit
-row, while running Unlocked: the game keeps it in bbport.ini) (the launcher's experimental
+(30 is in the launcher's list since 1.5.0.1; the game's own menu has it too, its FPS limit row, while
+running Unlocked: the game keeps it in bbport.ini) (the launcher's experimental
 unlocked co-op; not yet tested in a team).
 
-## Upstream tests that fail on Linux
+## Hosting a server: not in this package
 
-5 of tests/test_coop_launcher.py fail on Linux before and after this fork's changes: they test the
-Windows firewall, Windows code pages and the Windows updater (setup .exe), which the Linux build does
-not use.
+The launcher's Start server and Stop server work on Linux (Tutuzaooo's port, merged in 1.5.0.1), and
+show when the package holds the co-op server (server/shadnet). This tarball is built without it (it
+needs Qt 6.8 or newer, which the build machine did not have): play on the public server (Global), or
+join a host on Windows or on Tutuzaooo's AppImage.
+
+## Upstream tests on Linux
+
+tests/ pass on Linux but one, tests/test_mods.py (icons overlay), which fails the same way on the
+unchanged 1.5.0 source.
+
+## 1.5.0.1: built on 1.5.0, with Tutuzaooo's Linux port merged
+
+The public server moved to 1.5.0 (2026-11-12): a 1.4.0 game is refused. 1.5.0.1 is this fork's port
+carried onto the 1.5.0 source, with the work of Tutuzaooo's linux-port-1.5.0
+(github.com/Tutuzaooo/BBSC-Yharnam-Together) merged: the launcher's game session (stop and restart),
+Start/Stop server, the mouse camera, the menu's mouse focus (stray presses), the fault report, DLSS
+on Linux, GCC 14 fixes, and the AppImage recipe (packaging/linux/appimage-geral, not used for this
+tarball). Not yet run on a Steam Deck as of its build.
 
 ## Fixed in 1.4.0.1 (for reference)
 
