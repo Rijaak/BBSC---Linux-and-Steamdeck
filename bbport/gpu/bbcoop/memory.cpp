@@ -12,9 +12,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
-#include <fstream>
-#include <sstream>
-#include <string>
+#include <cstdio>
+#include <cstdlib>
 #endif
 #include "bbcoop/bbcoop_internal.h"
 #include "core/memory.h"
@@ -84,32 +83,49 @@ bool HostRegion(uintptr_t address, Region& found) {
     return true;
 }
 #else
-// /proc/self/maps, read again when an address is not in it or it is older than a moment: the
-// co-op code asks about stack words in bursts (a call chain), one region after another.
+// /proc/self/maps, read again when it is older than a moment, or when an address is not in it and
+// it was not read just now: the co-op code asks about stack words in bursts (a call chain), one
+// region after another.
+// Rijaak 2026-11-13 (a Steam Deck in a team, 1.5.0.1): every address the table did not have read
+// the file again, and reading it took about 3 ms (some thousand lines through iostreams), so a
+// burst of 11 unmapped words cost 33 ms once a second ("Co-op tick spike ... 11 memory checks",
+// 1% low 15 FPS at 30). A miss now reads the file again only when the table is older than
+// MissAge, and the lines are parsed without streams.
 bool HostRegion(uintptr_t address, Region& found) {
     using Clock = std::chrono::steady_clock;
+    constexpr auto HitAge = std::chrono::milliseconds{250};
+    constexpr auto MissAge = std::chrono::milliseconds{50};
     static std::mutex mutex;
     static std::vector<Region> regions;
     static Clock::time_point read_at;
     std::scoped_lock lock{mutex};
     const auto now = Clock::now();
-    if (now - read_at < std::chrono::milliseconds{250} && FindIn(regions, address, found)) {
-        return true;
+    const auto age = now - read_at;
+    if (age < HitAge && FindIn(regions, address, found)) {
+        return found.prot != 0;
+    }
+    if (age < MissAge) {
+        return false; // read just now, and not there
     }
     regions.clear();
     read_at = now;
-    std::ifstream maps{"/proc/self/maps"};
-    for (std::string line; std::getline(maps, line);) {
-        uintptr_t start{}, end{};
-        char dash{};
-        std::string perms;
-        std::istringstream fields{line};
-        fields >> std::hex >> start >> dash >> end >> perms;
-        if (perms.size() >= 3) {
+    if (std::FILE* maps = std::fopen("/proc/self/maps", "re")) {
+        char line[512];
+        while (std::fgets(line, sizeof(line), maps)) {
+            char* at = line;
+            const uintptr_t start = std::strtoull(at, &at, 16);
+            if (*at != '-') {
+                continue; // the rest of a line longer than the buffer (a long path)
+            }
+            const uintptr_t end = std::strtoull(at + 1, &at, 16);
+            if (at[0] != ' ' || at[1] == '\0' || at[2] == '\0' || at[3] == '\0') {
+                continue;
+            }
             regions.push_back({start, end,
-                               (perms[0] == 'r' ? Read : 0) | (perms[1] == 'w' ? Write : 0) |
-                                   (perms[2] == 'x' ? Execute : 0)});
+                               (at[1] == 'r' ? Read : 0) | (at[2] == 'w' ? Write : 0) |
+                                   (at[3] == 'x' ? Execute : 0)});
         }
+        std::fclose(maps);
     }
     return FindIn(regions, address, found) && found.prot != 0;
 }
