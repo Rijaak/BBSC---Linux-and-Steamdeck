@@ -20,6 +20,7 @@
 #include <map>
 #include <span>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -3022,6 +3023,26 @@ bool Press(const char* id, ImVec2 at, ImVec2 size, bool enabled, bool& focused) 
 }
 
 /// One button: its label (drawn centred in `size` at `at`), true when pressed.
+// Rijaak 2026-11-13: the server does not say back whom this player invited, so Invite gave no sign
+// that the press was taken (a Steam Deck's playtest). The hunters invited into this team are kept
+// here: their button reads Invited and stays live, to invite again. A new team starts empty.
+struct InvitedHunters {
+    std::string team;
+    std::unordered_set<std::string> ids;
+    void Follow(const bbcoop_lobby& lobby) {
+        // The team is its leader's (members[0]); the code is not the key: its leader can ask for a new one.
+        const std::string now = lobby.in_team && lobby.member_count > 0 ? lobby.members[0].id : "";
+        if (now != team) {
+            team = now;
+            ids.clear();
+        }
+    }
+    const char* Label(const char* id) const {
+        return ids.contains(id) ? T("Invited", "Приглашён") : T("Invite", "Пригласить");
+    }
+};
+InvitedHunters invited_hunters;
+
 bool Button(ImDrawList* draw, const char* id, const char* label, ImVec2 at, ImVec2 size, bool enabled = true,
             bool primary = false) {
     bool focused = false;
@@ -4181,6 +4202,7 @@ void DrawFriends(ImDrawList* draw, ImVec2 win, ImVec2 size) {
     }
     ImGui::PushFont(MenuArt::Font(), 19.0f);
     const bool can_invite = lobby.in_team && lobby.member_count < BBCOOP_LOBBY_TEAM;
+    invited_hunters.Follow(lobby);
     const auto more = [&](float x, float y, int left) {
         if (left > 0) {
             const std::string line = std::string(T("and more: ", "и ещё: ")) + std::to_string(left);
@@ -4202,10 +4224,11 @@ void DrawFriends(ImDrawList* draw, ImVec2 win, ImVec2 size) {
         FriendRow(draw, col_x[0], y, col_w, row_h, f, status.c_str(), TeamStateColor(f), 2, small_w);
         const float b1 = col_x[0] + col_w - 2 * small_w - S(6.0f), b2 = col_x[0] + col_w - small_w;
         const ImVec2 bs(small_w, row_h - S(6.0f));
-        if (Button(draw, (std::string("finvite") + f.id).c_str(), T("Invite", "Пригласить"), ImVec2(b1, y), bs,
+        if (Button(draw, (std::string("finvite") + f.id).c_str(), invited_hunters.Label(f.id), ImVec2(b1, y), bs,
                    LobbyRows::MayInvite(can_invite, f.in_my_team != 0, f.team_leader) &&
                        f.state != BBCOOP_LOBBY_OFFLINE)) {
             bbcoop_lobby_request(BBCOOP_TEAM_INVITE, f.id);
+            invited_hunters.ids.insert(f.id);
         }
         if (Button(draw, (std::string("fremove") + f.id).c_str(), armed ? T("Sure?", "Точно?") : T("Remove", "Удалить"),
                    ImVec2(b2, y), bs)) {
@@ -4567,6 +4590,7 @@ void Screen() {
     const int rows = 5;
     float y = lists_y + S(50.0f);
     const bool can_invite = lobby.in_team && lobby.member_count < BBCOOP_LOBBY_TEAM;
+    invited_hunters.Follow(lobby);
     // Amanises 2026-10-25: a box over the list keeps only the names holding its text (any case); a
     // name nobody here has goes to the friends page's search of the whole server with Enter (a
     // public server lists only some of its players here).
@@ -4639,10 +4663,11 @@ void Screen() {
             bbcoop_lobby_request(BBCOOP_TEAM_FRIEND_ADD, p.id);
         }
         const std::string id = std::string("invite") + p.id;
-        if (Button(draw, id.c_str(), T("Invite", "Пригласить"), ImVec2(left_x + list_w - button_w, y),
+        if (Button(draw, id.c_str(), invited_hunters.Label(p.id), ImVec2(left_x + list_w - button_w, y),
                    ImVec2(button_w, row_h - S(6.0f)),
                    LobbyRows::MayInvite(can_invite, p.in_my_team != 0, p.team_leader))) {
             bbcoop_lobby_request(BBCOOP_TEAM_INVITE, p.id);
+            invited_hunters.ids.insert(p.id);
         }
     }
     y = lists_y + S(50.0f);
