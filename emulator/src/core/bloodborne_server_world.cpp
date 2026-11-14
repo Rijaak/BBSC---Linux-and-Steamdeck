@@ -192,8 +192,13 @@ struct LeaveHome {
     float x = 0, y = 0, z = 0, heading = 0;
     s64 left_ms = 0;
     s64 idle_since_ms = -1;
+    bool late_world = false; // TickOwnWorldAfterLoad's: no team was left
 };
 std::optional<LeaveHome> leave_home;      // the game's thread
+// Rijaak 2026-11-14 (Steam Deck): the flags PutOwnWorldBack last changed, and the place visit
+// TickOwnWorldAfterLoad last looked at. The game's thread.
+size_t own_world_changed = 0;
+u64 own_world_visit_checked = 0;
 constexpr s64 LeaveHomeSettleMs = 1'000;  // out of the session and not loading this long
 constexpr s64 LeaveHomeGiveUpMs = 30'000; // still in the session: left to the game
 // Kaniel 2026-10-16: the team screen opened over the game from its System menu (TeamMenu), and
@@ -2092,6 +2097,8 @@ void TeamJoinHunt(const std::string& invite_team) {
 
 namespace {
 
+std::optional<LeaveHome> StandingPoint();
+
 // Kaniel 2026-10-16: out of the team this save played in (removed by its leader, or it left from
 // the menu): the team's session is left where the player stands, as a guest alone in it leaves
 // (TeamJoin::LeaveAlone), and the save plays on alone: no party, its own world back from the next
@@ -2127,21 +2134,7 @@ void LeaveTeamInPlay(u64 manager) {
     const s32 matching = ReadValue<s32>(manager, 0x124);
     if (matching != 0 && !was_host) {
         // Where it stands, read while it is still the game's player (see LeaveHome).
-        const u64 player = GetLocalPlayer();
-        const u64 modules = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
-        const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
-        const u32 map = GetCurrentPackedMap();
-        if (IsUsablePackedMap(map) && physics >= 0x10000 &&
-            HasMemoryAccess(physics, 0x1EC, MemoryProt::CpuRead)) {
-            leave_home = LeaveHome{
-                .map = map,
-                .x = ReadValue<float>(physics, 0x1E0),
-                .y = ReadValue<float>(physics, 0x1E4),
-                .z = ReadValue<float>(physics, 0x1E8),
-                .heading = ReadValue<float>(physics, 0x1D4),
-                .left_ms = SteadyMilliseconds(),
-            };
-        }
+        leave_home = StandingPoint();
     }
     if (matching != 0) {
         reinterpret_cast<void PS4_SYSV_ABI (*)(u64)>(image_base +
@@ -2193,10 +2186,84 @@ void TickLeaveHome(u64 manager) {
                           .heading = home.heading};
     const bool started = WarpGuestToLampPoint(point);
     LOG_INFO(Debug,
-             "Co-op team menu: out of the team: {} where it stood (map {:#x} at {:.1f} {:.1f} "
-             "{:.1f}, {} ms after the leave)",
+             "Co-op team {}: {} where it stood (map {:#x} at {:.1f} {:.1f} "
+             "{:.1f}, {} ms after)",
+             home.late_world ? "world: its own world came back after the map loaded"
+                             : "menu: out of the team",
              started ? "its own world loads" : "the load home did not start", home.map, home.x,
              home.y, home.z, now - home.left_ms);
+}
+
+// Where the player stands, for a load in place (LeaveHome).
+std::optional<LeaveHome> StandingPoint() {
+    const u64 player = GetLocalPlayer();
+    const u64 modules = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
+    const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+    const u32 map = GetCurrentPackedMap();
+    if (!IsUsablePackedMap(map) || physics < 0x10000 ||
+        !HasMemoryAccess(physics, 0x1EC, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    return LeaveHome{
+        .map = map,
+        .x = ReadValue<float>(physics, 0x1E0),
+        .y = ReadValue<float>(physics, 0x1E4),
+        .z = ReadValue<float>(physics, 0x1E8),
+        .heading = ReadValue<float>(physics, 0x1D4),
+        .left_ms = SteadyMilliseconds(),
+    };
+}
+
+// Rijaak 2026-11-14 (Steam Deck, 1.5.0.1): a save's own world comes back at a load's map item
+// hook (CreateMapItemsForPartyGuest, ApplyTeamWorldOnLoad), and a map without map items never
+// runs it: the Hunter's Dream. He left a team as its guest in the Dream, and started the game
+// alone there twice: the other host's world stayed in his save (the workshop on fire, the
+// lamps of a late game) with its own world still in the file, and nothing in the log. So once
+// the player stands in a map with its own world still due, it goes in here, and the map loads
+// again where the player stands if any flag changed (its events ran on the other world's).
+constexpr s64 OwnWorldAfterLoadMs = 1'500; // standing this long: the load's hook had its turn
+void TickOwnWorldAfterLoad(u64 manager) {
+    {
+        std::scoped_lock lock{team_mutex};
+        if (!personal_world_due || team_world_due) {
+            return;
+        }
+    }
+    const Place place = Coop::CurrentPlace();
+    if (place.state != PlaceState::Playing || place.visit == own_world_visit_checked ||
+        SteadyMilliseconds() - place.since_ms < OwnWorldAfterLoadMs || leave_home ||
+        character_slot.load() < 0 || ReadValue<s32>(manager, 0x124) != 0 || InPartySession() ||
+        Coop::Invading()) {
+        return;
+    }
+    own_world_visit_checked = place.visit;
+    own_world_changed = 0;
+    ApplyTeamWorldOnLoad();
+    bool still_due = false;
+    {
+        std::scoped_lock lock{team_mutex};
+        still_due = personal_world_due;
+    }
+    if (own_world_changed == 0) {
+        if (still_due) {
+            LOG_WARNING(Debug,
+                        "Co-op team world: slot {}'s own world is still due on map {:#x} "
+                        "(visit {}) and nothing of it went in here",
+                        character_slot.load(), place.map, place.visit);
+        }
+        return;
+    }
+    LOG_WARNING(Debug,
+                "Co-op team world: map {:#x} loaded without its own world (no map item hook "
+                "ran): {} flags put back after the load; the map loads again",
+                place.map, own_world_changed);
+    if (auto point = StandingPoint()) {
+        point->late_world = true;
+        leave_home = point;
+    } else {
+        LOG_WARNING(Debug, "Co-op team world: where the player stands does not read: no load "
+                           "again; the map shows its own world from its next load");
+    }
 }
 
 // Kaniel 2026-10-16: the team's Start for a save playing alone (it joined the hunt from the
@@ -2463,6 +2530,7 @@ bool TickTeamJoin(bool ready) {
     // Kaniel 2026-10-16: the team menu in game: out of the team, or into it, where it stands.
     TickTeamPlay(manager);
     TickLeaveHome(manager);
+    TickOwnWorldAfterLoad(manager);
     std::optional<bbcoop::TeamSession> session;
     bool in_team = false;
     bool left_in_play = false;
@@ -2865,6 +2933,7 @@ bool PutOwnWorldBack(int slot, std::string_view why) {
         return false;
     }
     const size_t changed = SetWorldFlags(*store, *own);
+    own_world_changed += changed;
     const u32 per_block = store->store.flags_per_block;
     for (const FlagBlockBits& block : store->blocks) {
         std::erase(own->blocks, block.id);
