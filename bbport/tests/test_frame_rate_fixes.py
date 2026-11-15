@@ -35,9 +35,19 @@ def fixes(names, env=None, original=ORIGINAL, segments=SEGMENTS):
 
 
 class FrameRateFixesTest(unittest.TestCase):
-    def test_none_at_30_fps(self):
-        self.assertEqual(fixes([]), [])
-        self.assertEqual(fixes(['Intel tonemap fix']), [])
+    def test_30_fps_gets_the_steady_cloth_time_alone(self):
+        # LINUX_FORK: a Steam Deck falls under 30 FPS, and teammates arrive in jumps.
+        for names in ([], ['Intel tonemap fix']):
+            named = fixes(names)
+            self.assertEqual({name for name, _, _ in named}, {'Steady cloth time'})
+            self.assertEqual([w for _, *w in named], [list(w) for w in cloth_time.code_writes()])
+
+    def test_none_at_30_fps_when_turned_off(self):
+        self.assertEqual(fixes([], env={'BB_CLOTH_TIME_AT_30': '0'}), [])
+        self.assertEqual(fixes([], env={'BB_CLOTH_TIME': '0'}), [])
+        self.assertEqual(fixes([], env={'BB_FRAME_RATE_FIXES': '0'}), [])
+        # With a frame rate patch the switch for 30 FPS changes nothing.
+        self.assertIn('Steady cloth', {n for n, _, _ in fixes(['60 FPS++'], env={'BB_CLOTH_TIME_AT_30': '0'})})
 
     def test_uncap_fps_gets_all_five(self):
         named = fixes(['Uncap FPS++', 'Sprint Fix (High FPS)'])

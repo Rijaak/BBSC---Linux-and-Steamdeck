@@ -705,7 +705,12 @@ def frame_rate_fixes(names, image_bytes, segments, env=os.environ):
     end); segments [(start, end)]). Each is skipped when its sites hold other code; BB_FRAME_RATE_FIXES=0
     turns them all off, BB_CLOTH_TIME, BB_STEADY_CLOTH, BB_FOLIAGE_TIME, BB_AIR_DRAG and BB_EFFECT_TIME=0
     one each."""
-    if not any(n in names for n in HIGH_FPS) or env.get('BB_FRAME_RATE_FIXES')=='0':
+    high=any(n in names for n in HIGH_FPS)
+    # LINUX_FORK (Rijaak, Steam Deck 2026-11-15): at 30 FPS the steady cloth time alone. A Deck
+    # falls under 30 in heavy places (16 FPS at The One Reborn) and in a team the others' characters
+    # arrive in jumps: a teammate drew with huge stretched polygons all session. The cloth's time
+    # is then never above 1/30 s. BB_CLOTH_TIME_AT_30=0: none at 30 FPS, as before.
+    if env.get('BB_FRAME_RATE_FIXES')=='0' or (not high and env.get('BB_CLOTH_TIME_AT_30')=='0'):
         return []
     sys.path.insert(0,str(Path(__file__).resolve().parent))
     import air_drag, cloth, cloth_time, code_cave, effect_time, foliage_time
@@ -727,6 +732,8 @@ def frame_rate_fixes(names, image_bytes, segments, env=os.environ):
 
     # A steady time step for the cloth: a stutter is no kick to capes and dresses.
     steady=env.get('BB_CLOTH_TIME')!='0' and add(cloth_time,'Steady cloth time')
+    if not high:
+        return named
     # Cloth as at 30 FPS at any frame rate; it steps with the steady time, so only with that one.
     if steady and env.get('BB_STEADY_CLOTH')!='0':
         add(cloth,'Steady cloth')
