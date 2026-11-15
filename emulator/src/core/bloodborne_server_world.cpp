@@ -193,12 +193,16 @@ struct LeaveHome {
     s64 left_ms = 0;
     s64 idle_since_ms = -1;
     bool late_world = false; // TickOwnWorldAfterLoad's: no team was left
+    bool to_dream = false;   // TickDreamAfterGuest's: the Hunter's Dream, not where it stood
 };
 std::optional<LeaveHome> leave_home;      // the game's thread
 // Rijaak 2026-11-14 (Steam Deck): the flags PutOwnWorldBack last changed, and the place visit
 // TickOwnWorldAfterLoad last looked at. The game's thread.
 size_t own_world_changed = 0;
 u64 own_world_visit_checked = 0;
+// Rijaak 2026-11-15: PutOwnWorldBack put the last of this save's own world back (see
+// TickDreamAfterGuest). The game's thread.
+bool own_world_just_back = false;
 constexpr s64 LeaveHomeSettleMs = 1'000;  // out of the session and not loading this long
 constexpr s64 LeaveHomeGiveUpMs = 30'000; // still in the session: left to the game
 // Kaniel 2026-10-16: the team screen opened over the game from its System menu (TeamMenu), and
@@ -2120,6 +2124,12 @@ namespace {
 
 std::optional<LeaveHome> StandingPoint();
 bool OwnWorldStillAside(int slot);
+std::optional<bool> OwnWorldHasLampOn(int slot, u32 packed_map);
+constexpr s64 OwnWorldAfterLoadMs = 1'500; // standing this long: the load's hook had its turn
+bool DreamAfterGuest() {
+    const char* const setting = std::getenv("BB_DREAM_AFTER_GUEST");
+    return !setting || std::string_view{setting} != "0";
+}
 
 // Kaniel 2026-10-16: out of the team this save played in (removed by its leader, or it left from
 // the menu): the team's session is left where the player stands, as a guest alone in it leaves
@@ -2199,7 +2209,26 @@ void TickLeaveHome(u64 manager) {
     if (now - leave_home->idle_since_ms < LeaveHomeSettleMs) {
         return;
     }
-    const LeaveHome home = *std::exchange(leave_home, std::nullopt);
+    LeaveHome home = *std::exchange(leave_home, std::nullopt);
+    // Out of a team on a map its own world has no lamp lit on: the Hunter's Dream (see
+    // TickDreamAfterGuest), not where it stood.
+    if (!home.to_dream && !home.late_world && DreamAfterGuest()) {
+        std::scoped_lock lock{team_mutex};
+        home.to_dream = OwnWorldHasLampOn(character_slot.load(), home.map) == false;
+    }
+    if (home.to_dream) {
+        const LampPoint& dream = LampPoints.front();
+        const u32 from = home.map;
+        home.map = dream.packed_map;
+        home.x = dream.x;
+        home.y = dream.y;
+        home.z = dream.z;
+        home.heading = dream.heading;
+        LOG_WARNING(Debug,
+                    "Co-op team world: this save's own world has no lamp lit on map {:#x}, "
+                    "where it stood after another host's world: it wakes in the Hunter's Dream",
+                    from);
+    }
     const LampPoint point{.warp_point = -1,
                           .packed_map = home.map,
                           .x = home.x,
@@ -2208,12 +2237,56 @@ void TickLeaveHome(u64 manager) {
                           .heading = home.heading};
     const bool started = WarpGuestToLampPoint(point);
     LOG_INFO(Debug,
-             "Co-op team {}: {} where it stood (map {:#x} at {:.1f} {:.1f} "
+             "Co-op team {}: {} {} (map {:#x} at {:.1f} {:.1f} "
              "{:.1f}, {} ms after)",
-             home.late_world ? "world: its own world came back after the map loaded"
-                             : "menu: out of the team",
-             started ? "its own world loads" : "the load home did not start", home.map, home.x,
-             home.y, home.z, now - home.left_ms);
+             home.to_dream      ? "world: to the Hunter's Dream"
+             : home.late_world ? "world: its own world came back after the map loaded"
+                               : "menu: out of the team",
+             started ? "its own world loads" : "the load home did not start",
+             home.to_dream ? "in the Dream" : "where it stood", home.map, home.x, home.y, home.z,
+             now - home.left_ms);
+}
+
+// Rijaak 2026-11-15 (Steam Deck): a guest's character stays where it stood when its own world
+// comes back. In a host's world ahead of its own that is a place its own world has not reached:
+// its bosses alive behind it, its doors shut, no lamp lit. So when the last of its own world is
+// back and that world has no lamp lit on the map it stands on, it wakes in the Hunter's Dream
+// instead. A map the lamp table does not know (a Chalice Dungeon) is left alone, and so is a
+// game in a session (its host: never a load under a team). BB_DREAM_AFTER_GUEST=0: where it
+// stood, as before.
+void TickDreamAfterGuest(u64 manager) {
+    if (!own_world_just_back) {
+        return;
+    }
+    const Place place = Coop::CurrentPlace();
+    if (place.state != PlaceState::Playing ||
+        SteadyMilliseconds() - place.since_ms < OwnWorldAfterLoadMs || leave_home) {
+        return;
+    }
+    own_world_just_back = false;
+    if (!DreamAfterGuest() || Coop::Invading()) {
+        return;
+    }
+    std::optional<bool> lamp;
+    {
+        std::scoped_lock lock{team_mutex};
+        lamp = OwnWorldHasLampOn(character_slot.load(), place.map);
+    }
+    if (lamp != false) {
+        return;
+    }
+    if (ReadValue<s32>(manager, 0x124) != 0 || InPartySession()) {
+        LOG_WARNING(Debug,
+                    "Co-op team world: this save's own world has no lamp lit on map {:#x}, "
+                    "where it stands; in a session: it stays",
+                    place.map);
+        return;
+    }
+    LeaveHome home;
+    home.map = place.map;
+    home.left_ms = SteadyMilliseconds();
+    home.to_dream = true;
+    leave_home = home;
 }
 
 // Where the player stands, for a load in place (LeaveHome).
@@ -2243,7 +2316,6 @@ std::optional<LeaveHome> StandingPoint() {
 // lamps of a late game) with its own world still in the file, and nothing in the log. So once
 // the player stands in a map with its own world still due, it goes in here, and the map loads
 // again where the player stands if any flag changed (its events ran on the other world's).
-constexpr s64 OwnWorldAfterLoadMs = 1'500; // standing this long: the load's hook had its turn
 void TickOwnWorldAfterLoad(u64 manager) {
     // Alone, or (Rijaak 2026-11-15) the host of a team whose world its save is about to make
     // while another's world is still in that save (see OwnWorldStillAside).
@@ -2570,6 +2642,7 @@ bool TickTeamJoin(bool ready) {
     TickTeamPlay(manager);
     TickLeaveHome(manager);
     TickOwnWorldAfterLoad(manager);
+    TickDreamAfterGuest(manager);
     std::optional<bbcoop::TeamSession> session;
     bool in_team = false;
     bool left_in_play = false;
@@ -2982,6 +3055,7 @@ bool PutOwnWorldBack(int slot, std::string_view why) {
         std::error_code error;
         std::filesystem::remove(PersonalWorldFile(slot), error);
         personal_world_due = false;
+        own_world_just_back = true;
     } else {
         WriteWholeFile(PersonalWorldFile(slot), FormatWorldFlags(*own));
     }
@@ -3006,6 +3080,40 @@ bool OwnWorldStillAside(int slot) {
     }
     const auto own = ParseWorldFlags(ReadWholeFile(PersonalWorldFile(slot)));
     return own && !own->blocks.empty();
+}
+
+// Whether this save's own world has a lamp lit on `packed_map` (a lamp's active flag,
+// LampOfActiveFlag): from its world kept aside while that is in its file (another's world is in
+// the save), else from the game's flags. None for a map the lamp table does not know; the
+// Hunter's Dream always has. team_mutex held.
+std::optional<bool> OwnWorldHasLampOn(int slot, u32 packed_map) {
+    if (packed_map == LampPoints.front().packed_map) { // the Hunter's Dream
+        return true;
+    }
+    if (std::ranges::none_of(LampPoints,
+                             [&](const LampPoint& p) { return p.packed_map == packed_map; })) {
+        return std::nullopt;
+    }
+    // A lamp's entity is map * 10000 + 1950 + n, its active flag 10007810 + map * 10000 + 20 n,
+    // with map = area * 10 + block (m24_01: 241).
+    const s32 map = static_cast<s32>((packed_map >> 24) & 0xFF) * 10 +
+                    static_cast<s32>((packed_map >> 16) & 0xFF);
+    std::optional<WorldFlags> aside;
+    if (slot >= 0) {
+        aside = ParseWorldFlags(ReadWholeFile(PersonalWorldFile(slot)));
+        if (aside && aside->blocks.empty()) {
+            aside.reset();
+        }
+    }
+    for (s32 n = 0; n < 20; ++n) {
+        const s32 flag = 10007810 + map * 10000 + 20 * n;
+        const bool lit = aside ? std::ranges::find(aside->on, flag) != aside->on.end()
+                               : EventFlagOn(flag);
+        if (lit) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
