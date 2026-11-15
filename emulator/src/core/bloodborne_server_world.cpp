@@ -2098,6 +2098,7 @@ void TeamJoinHunt(const std::string& invite_team) {
 namespace {
 
 std::optional<LeaveHome> StandingPoint();
+bool OwnWorldStillAside(int slot);
 
 // Kaniel 2026-10-16: out of the team this save played in (removed by its leader, or it left from
 // the menu): the team's session is left where the player stands, as a guest alone in it leaves
@@ -2223,20 +2224,32 @@ std::optional<LeaveHome> StandingPoint() {
 // again where the player stands if any flag changed (its events ran on the other world's).
 constexpr s64 OwnWorldAfterLoadMs = 1'500; // standing this long: the load's hook had its turn
 void TickOwnWorldAfterLoad(u64 manager) {
+    // Alone, or (Rijaak 2026-11-15) the host of a team whose world its save is about to make
+    // while another's world is still in that save (see OwnWorldStillAside).
+    bool alone = false;
+    bool host_makes = false;
     {
         std::scoped_lock lock{team_mutex};
-        if (!personal_world_due || team_world_due) {
-            return;
-        }
+        alone = personal_world_due && !team_world_due;
+        host_makes = team_world_due && team_host && team_world && !team_world->exists();
+    }
+    if (!alone && !host_makes) {
+        return;
     }
     const Place place = Coop::CurrentPlace();
+    const bool in_session = ReadValue<s32>(manager, 0x124) != 0 || InPartySession();
     if (place.state != PlaceState::Playing || place.visit == own_world_visit_checked ||
         SteadyMilliseconds() - place.since_ms < OwnWorldAfterLoadMs || leave_home ||
-        character_slot.load() < 0 || ReadValue<s32>(manager, 0x124) != 0 || InPartySession() ||
-        Coop::Invading()) {
+        character_slot.load() < 0 || (alone && in_session) || Coop::Invading()) {
         return;
     }
     own_world_visit_checked = place.visit;
+    if (!alone) {
+        std::scoped_lock lock{team_mutex};
+        if (!OwnWorldStillAside(character_slot.load())) {
+            return;
+        }
+    }
     own_world_changed = 0;
     ApplyTeamWorldOnLoad();
     bool still_due = false;
@@ -2255,8 +2268,13 @@ void TickOwnWorldAfterLoad(u64 manager) {
     }
     LOG_WARNING(Debug,
                 "Co-op team world: map {:#x} loaded without its own world (no map item hook "
-                "ran): {} flags put back after the load; the map loads again",
-                place.map, own_world_changed);
+                "ran): {} flags put back after the load; {}",
+                place.map, own_world_changed,
+                in_session ? "in a session: the map shows it from its next load"
+                           : "the map loads again");
+    if (in_session) {
+        return; // never a load in place under a team's session
+    }
     if (auto point = StandingPoint()) {
         point->late_world = true;
         leave_home = point;
@@ -2953,6 +2971,22 @@ bool PutOwnWorldBack(int slot, std::string_view why) {
     return true;
 }
 
+// Rijaak 2026-11-15 (Steam Deck, 1.5.0.2): whether this slot's save still has another's world in
+// it, its own kept aside with blocks to come (a save with a home list: one from before the lists
+// keeps the world it last played, see OldSavesWorld). He closed the game as a guest in another
+// host's late world, then hosted "A new world" twice: the save's world, the other host's, was
+// taken for this save's own (every lamp of a late game on the headstones) and reported to the
+// server as the new team's; its first load outside the Hunter's Dream would have made it the
+// save's home world and retired its own. Such a save hosts no new world and reports none until
+// its own is back. team_mutex held.
+bool OwnWorldStillAside(int slot) {
+    if (slot < 0 || !ReadHomeWorlds(slot)) {
+        return false;
+    }
+    const auto own = ParseWorldFlags(ReadWholeFile(PersonalWorldFile(slot)));
+    return own && !own->blocks.empty();
+}
+
 } // namespace
 
 // This save's clear count (GameDataMan +0x68, as the GetClearCount event function reads it).
@@ -3105,6 +3139,23 @@ void ApplyTeamWorldOnLoad(bool trip) {
         // the server's copy back over it, a report up to 10 s old (rig 2026-10-20, boss-refight:
         // the host's next load put back Father Gascoigne's kill it had cleared after its report).
         if (team_host) {
+            // Another's world still in this save: its own back first, never the other's made
+            // this save's and the team's (OwnWorldStillAside).
+            if (OwnWorldStillAside(slot)) {
+                if (PutOwnWorldBack(slot, "hosts a new world")) {
+                    store = ReadWorldStore();
+                    if (!store) {
+                        return;
+                    }
+                }
+                if (OwnWorldStillAside(slot)) {
+                    LOG_WARNING(Debug,
+                                "Co-op team world: slot {} hosts a new world with its own "
+                                "still aside: not made from this save until its own is back",
+                                slot);
+                    return;
+                }
+            }
             for (const FlagBlockBits& block : store->blocks) {
                 team_world_blocks.insert(block.id);
             }
@@ -3302,6 +3353,10 @@ void TickTeamWorld(s64 now_ms) {
             return;
         }
         team_world_reported_ms = now_ms;
+        // Never another's world reported as this host's (OwnWorldStillAside).
+        if (OwnWorldStillAside(character_slot.load())) {
+            return;
+        }
     }
     const auto store = ReadWorldStore();
     if (!store) {
