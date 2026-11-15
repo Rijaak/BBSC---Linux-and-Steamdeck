@@ -1524,6 +1524,8 @@ std::mutex sheet_mutex;
 std::string sheet_sent;
 std::chrono::steady_clock::time_point sheet_sent_at{};
 
+std::optional<HomeWorlds> ReadHomeWorlds(int slot);
+
 // The game's settings as run.py hands them on (the build fingerprint's too).
 std::string SheetSetting(const char* name, std::string_view absent) {
     const char* value = std::getenv(name);
@@ -1702,7 +1704,26 @@ bool HoldTitleLoadForTeam(u32 slot, bool fresh) {
             const auto& lobby = team_gate.Lobby();
             if (lobby && (!lobby->has_team() || lobby->team().leader() == me)) {
                 team_world_default_sent = true;
-                const auto pick = TeamScreenWorldPick(*lobby, me, team_world_hint, title_fresh);
+                // LINUX_FORK (Rijaak 2026-11-15): the screen starts on the world this save
+                // last played only when it is one of the save's home worlds (a world it made:
+                // its own goes on there). Any other is another host's: after a hunt as a guest
+                // the screen started on the other host's late world, and one press hosted it
+                // (twice in one weekend on a Steam Deck). Then it starts on "A new world"; the
+                // player still picks any listed world.
+                // BB_TEAM_WORLD_DEFAULT=last: the world last played whoever made it, as before.
+                const char* const world_default = std::getenv("BB_TEAM_WORLD_DEFAULT");
+                const bool any_last = world_default && std::string_view{world_default} == "last";
+                const auto home = ReadHomeWorlds(static_cast<int>(slot));
+                const bool own_last = any_last || (home && home->Has(team_world_hint));
+                if (!own_last && !team_world_hint.empty() && !title_fresh) {
+                    LOG_INFO(Debug,
+                             "Co-op team lobby: world {} was last played and is not one this "
+                             "save made: the team screen starts on a new world",
+                             team_world_hint);
+                }
+                const auto pick = TeamScreenWorldPick(
+                    *lobby, me, own_last ? std::string_view{team_world_hint} : std::string_view{},
+                    title_fresh);
                 if (pick) {
                     bbcoop::Envelope envelope;
                     envelope.mutable_team_request()->set_action(bbcoop::TeamRequest::WORLD);
