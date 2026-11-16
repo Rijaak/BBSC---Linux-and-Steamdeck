@@ -1914,7 +1914,7 @@ bool CutsceneVoteView(u32& want, u32& watchers) {
     return shown != 0;
 }
 
-// LINUX_FORK (Rijaak/BBSC---Linux-and-Steamdeck): a cutscene is playing (the cutscene player in its
+// Linux: a cutscene is playing (the cutscene player in its
 // prologue-wait or play step, not stuck in it), alone or in a party: the overlay letterboxes it on an
 // output that is not 16:9, as the title screen (art past the game's 16:9 screen showed under it).
 bool CutscenePlaying() {
@@ -3066,14 +3066,49 @@ bool PutOwnWorldBack(int slot, std::string_view why) {
     return true;
 }
 
+// This save's own world aside (its slot's file), in the blocks of `store` the file has not yet: a
+// block the file has already (a save that held a team's before) keeps what the file says.
+// team_mutex held.
+void KeepOwnWorldAside(int slot, const WorldStore& store) {
+    if (store.blocks.empty()) {
+        return;
+    }
+    // A world kept aside from here on has a list beside it (an empty one for a save that made
+    // no world): only a save from before the lists has the one without the other.
+    std::error_code error;
+    if (!std::filesystem::exists(PersonalWorldFile(slot), error) &&
+        !std::filesystem::exists(HomeWorldFile(slot), error)) {
+        WriteWholeFile(HomeWorldFile(slot), FormatHomeWorlds({}));
+    }
+    WorldFlags own = ParseWorldFlags(ReadWholeFile(PersonalWorldFile(slot))).value_or(WorldFlags{});
+    std::vector<FlagBlockBits> new_blocks;
+    for (const FlagBlockBits& block : store.blocks) {
+        if (!std::binary_search(own.blocks.begin(), own.blocks.end(), block.id)) {
+            new_blocks.push_back(block);
+        }
+    }
+    if (new_blocks.empty()) {
+        return;
+    }
+    const WorldFlags added = CaptureWorldFlags(store.store.flags_per_block, new_blocks);
+    own.blocks.insert(own.blocks.end(), added.blocks.begin(), added.blocks.end());
+    own.on.insert(own.on.end(), added.on.begin(), added.on.end());
+    std::sort(own.blocks.begin(), own.blocks.end());
+    std::sort(own.on.begin(), own.on.end());
+    WriteWholeFile(PersonalWorldFile(slot), FormatWorldFlags(own));
+    LOG_INFO(Debug,
+             "Co-op team world: slot {}'s own world kept aside ({} more blocks, {} flags on "
+             "in all)",
+             slot, added.blocks.size(), own.on.size());
+}
+
 // Rijaak 2026-11-15 (Steam Deck, 1.5.0.2): whether this slot's save still has another's world in
 // it, its own kept aside with blocks to come (a save with a home list: one from before the lists
-// keeps the world it last played, see OldSavesWorld). He closed the game as a guest in another
-// host's late world, then hosted "A new world" twice: the save's world, the other host's, was
-// taken for this save's own (every lamp of a late game on the headstones) and reported to the
-// server as the new team's; its first load outside the Hunter's Dream would have made it the
-// save's home world and retired its own. Such a save hosts no new world and reports none until
-// its own is back. team_mutex held.
+// keeps the world it last played, see OldSavesWorld). 1.5.1 puts a host's own world back before
+// it makes a new world (ApplyTeamWorldOnLoad), but that runs at a load's map item hook, which the
+// Hunter's Dream never runs: he hosted "A new world" there and the other host's late world stayed
+// in his save. TickOwnWorldAfterLoad asks this to run that step after a load in the Dream too.
+// team_mutex held.
 bool OwnWorldStillAside(int slot) {
     if (slot < 0 || !ReadHomeWorlds(slot)) {
         return false;
@@ -3114,40 +3149,6 @@ std::optional<bool> OwnWorldHasLampOn(int slot, u32 packed_map) {
         }
     }
     return false;
-// This save's own world aside (its slot's file), in the blocks of `store` the file has not yet: a
-// block the file has already (a save that held a team's before) keeps what the file says.
-// team_mutex held.
-void KeepOwnWorldAside(int slot, const WorldStore& store) {
-    if (store.blocks.empty()) {
-        return;
-    }
-    // A world kept aside from here on has a list beside it (an empty one for a save that made
-    // no world): only a save from before the lists has the one without the other.
-    std::error_code error;
-    if (!std::filesystem::exists(PersonalWorldFile(slot), error) &&
-        !std::filesystem::exists(HomeWorldFile(slot), error)) {
-        WriteWholeFile(HomeWorldFile(slot), FormatHomeWorlds({}));
-    }
-    WorldFlags own = ParseWorldFlags(ReadWholeFile(PersonalWorldFile(slot))).value_or(WorldFlags{});
-    std::vector<FlagBlockBits> new_blocks;
-    for (const FlagBlockBits& block : store.blocks) {
-        if (!std::binary_search(own.blocks.begin(), own.blocks.end(), block.id)) {
-            new_blocks.push_back(block);
-        }
-    }
-    if (new_blocks.empty()) {
-        return;
-    }
-    const WorldFlags added = CaptureWorldFlags(store.store.flags_per_block, new_blocks);
-    own.blocks.insert(own.blocks.end(), added.blocks.begin(), added.blocks.end());
-    own.on.insert(own.on.end(), added.on.begin(), added.on.end());
-    std::sort(own.blocks.begin(), own.blocks.end());
-    std::sort(own.on.begin(), own.on.end());
-    WriteWholeFile(PersonalWorldFile(slot), FormatWorldFlags(own));
-    LOG_INFO(Debug,
-             "Co-op team world: slot {}'s own world kept aside ({} more blocks, {} flags on "
-             "in all)",
-             slot, added.blocks.size(), own.on.size());
 }
 
 } // namespace
@@ -3522,10 +3523,6 @@ void TickTeamWorld(s64 now_ms) {
             return;
         }
         team_world_reported_ms = now_ms;
-        // Never another's world reported as this host's (OwnWorldStillAside).
-        if (OwnWorldStillAside(character_slot.load())) {
-            return;
-        }
     }
     const auto store = ReadWorldStore();
     if (!store) {
