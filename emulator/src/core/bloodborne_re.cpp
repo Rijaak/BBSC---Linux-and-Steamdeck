@@ -754,6 +754,7 @@ void ReconcileMemberPresence() {
     static std::unordered_map<u64, s64> first_seen;
     static std::unordered_set<u64> stale_hidden;
     static std::unordered_map<u64, FadeBack> fade_back;
+    static std::unordered_set<u64> unplaced_noted;
     using SetDisabled = void PS4_SYSV_ABI (*)(u64, bool);
     const auto set_disabled =
         reinterpret_cast<SetDisabled>(image_base + SetCharacterDisabledOffset);
@@ -769,6 +770,7 @@ void ReconcileMemberPresence() {
     std::erase_if(first_seen, [&](const auto& entry) { return !present.contains(entry.first); });
     std::erase_if(stale_hidden, [&](u64 character) { return !present.contains(character); });
     std::erase_if(fade_back, [&](const auto& entry) { return !present.contains(entry.first); });
+    std::erase_if(unplaced_noted, [&](u64 character) { return !present.contains(character); });
     // Kaniel's playtest 2026-10-19: two copies of one member take his packets off one queue on two
     // threads (a double free in everyone's game when he joined back). All but his newest copy
     // stay hidden (a hidden copy's update, the one that takes them, does not run).
@@ -839,9 +841,15 @@ void ReconcileMemberPresence() {
         unmatched_since.clear();
         return;
     }
+    // Rijaak 2026-11-15 (Steam Deck host): a character standing exactly at the map's origin has
+    // not been placed yet (no position of its member has reached it). Hidden there, its update no
+    // longer runs, so it never moves and never matches its member: it stays hidden for good. A
+    // teammate on an unlocked frame rate joined, sat at (0, 0, 0) past the 15 s grace, was hidden,
+    // and stayed invisible all session while his kills and sounds came through (three such hides
+    // in one session, none shown again). Such a character counts as one with no position: shown.
     std::vector<std::optional<LampPosition>> positions;
     for (const OtherPlayer& other : others) {
-        positions.push_back(other.at);
+        positions.push_back(PlacedPosition(other.at));
     }
     // A party member's death (not an invader's: its line joins the board below).
     const bool someone_died = std::ranges::any_of(board, [&](const MemberVitals& member) {
@@ -888,7 +896,16 @@ void ReconcileMemberPresence() {
                      "member {} is up again: faded back in",
                      ReadValue<u32>(character, 0x08), board[*member].member);
         }
-        const bool shown = !others[i].at || member.has_value();
+        const bool shown = !positions[i] || member.has_value();
+        if (others[i].at && !positions[i] &&
+            now_ms - first_seen.at(character) >= PresenceNewCharacterMs &&
+            unplaced_noted.insert(character).second) {
+            LOG_WARNING(Debug,
+                        "Bloodborne presence: player {:#x} still stands unplaced at the map's "
+                        "origin {} s after it was made: kept shown (hidden, it would never move)",
+                        ReadValue<u32>(character, 0x08),
+                        (now_ms - first_seen.at(character)) / 1000);
+        }
         if (shown) {
             unmatched_since.erase(character);
             if (hidden.erase(character) > 0 && IsCharacterDisabled(character)) {

@@ -7287,6 +7287,13 @@ bool ShowsHiddenCopies(bool in_session, bool board_fresh, bool on_map) {
     return in_session && (!board_fresh || !on_map);
 }
 
+std::optional<LampPosition> PlacedPosition(const std::optional<LampPosition>& at) {
+    if (at && (*at)[0] == 0.0f && (*at)[1] == 0.0f && (*at)[2] == 0.0f) {
+        return std::nullopt;
+    }
+    return at;
+}
+
 bool PresenceHides(s64 now_ms, s64 first_seen_ms, s64 unmatched_since_ms) {
     return now_ms - unmatched_since_ms >= PresenceGraceMs &&
            now_ms - first_seen_ms >= PresenceNewCharacterMs;

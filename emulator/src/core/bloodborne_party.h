@@ -4161,6 +4161,9 @@ constexpr s64 PresenceNewCharacterMs = 15'000;
 // Whether a character by no member (since `unmatched_since_ms`), first seen at `first_seen_ms`,
 // is hidden now.
 bool PresenceHides(s64 now_ms, s64 first_seen_ms, s64 unmatched_since_ms);
+// A character's position, none while it stands exactly at the map's origin: the game has made it
+// but no position of its member has reached it yet (see ReconcileMemberPresence).
+std::optional<LampPosition> PlacedPosition(const std::optional<LampPosition>& at);
 // Rig owner-crash-fight 2026-11-03: the crashed host's leftover copy, hidden for no member by
 // it, was shown again when this game left its session alone and opened its own, and the enemy
 // fighting the guest went for it. The hidden copies are shown again (as the game has them) only
