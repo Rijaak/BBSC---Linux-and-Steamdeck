@@ -126,4 +126,12 @@ LATENCY = {
         'DLSS 프레임 생성: 성능 모드 (프리셋 C)',
         'NVIDIA 앱의 프리셋 C와 같은 더 가벼운 NVIDIA 프레임 생성: 게임 FPS가 높아지고 생성된 프레임의 디테일이 약간 줄어듭니다. 끄기: 전체 모델. 프레임 생성이 시작될 때 적용됩니다.',
     ],
+    'th': [  # English until translated
+        'Auto (with frame generation)',
+        'On + Boost (NVIDIA Reflex only)',
+        'Low latency (NVIDIA Reflex / AMD Anti-Lag 2)',
+        "The game starts each frame just in time for the graphics card instead of early, so what you press shows sooner. Auto: on with frame generation, which holds every frame back. Uses whichever the graphics card's driver offers; also in the game's Graphics menu.",
+        'DLSS frame generation: performance mode (preset C)',
+        "NVIDIA's lighter frame generation, as preset C in NVIDIA's App: more FPS for the game, a little less detail in the generated frames. Off: the full model. Takes effect when frame generation starts.",
+    ],
 }

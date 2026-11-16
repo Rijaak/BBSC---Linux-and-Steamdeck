@@ -564,5 +564,14 @@
  "No automatic camera rotation": "ไม่หมุนกล้องอัตโนมัติ",
  "Run with less stick tilt": "วิ่งโดยเอียงสติกน้อยลง",
  "Dark Souls-style body physics": "ฟิสิกส์ร่างกายแบบ Dark Souls",
- "Invited": "เชิญแล้ว"
+ "Invited": "เชิญแล้ว",
+ "Low latency": "Low latency",
+ "Low latency (NVIDIA Reflex)": "Low latency (NVIDIA Reflex)",
+ "Low latency (AMD Anti-Lag 2)": "Low latency (AMD Anti-Lag 2)",
+ "Auto (with frame generation)": "Auto (with frame generation)",
+ "On + Boost": "On + Boost",
+ "The game starts each frame just in time for the graphics card instead of early, so what you press shows sooner. Auto: on with frame generation, which holds every frame back. Boost (NVIDIA only): keeps the graphics card's clocks up, using a little more power.": "The game starts each frame just in time for the graphics card instead of early, so what you press shows sooner. Auto: on with frame generation, which holds every frame back. Boost (NVIDIA only): keeps the graphics card's clocks up, using a little more power.",
+ "Not offered by this graphics card's driver. NVIDIA Reflex needs a GeForce with VK_NV_low_latency2, AMD Anti-Lag 2 a Radeon with VK_AMD_anti_lag.": "Not offered by this graphics card's driver. NVIDIA Reflex needs a GeForce with VK_NV_low_latency2, AMD Anti-Lag 2 a Radeon with VK_AMD_anti_lag.",
+ "Game frame to display: %.1f ms (on)": "Game frame to display: %.1f ms (on)",
+ "Game frame to display: %.1f ms (off)": "Game frame to display: %.1f ms (off)"
 }

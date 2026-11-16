@@ -1663,7 +1663,7 @@ BB_MENU_TEXT("Auto (with frame generation)",
              "Auto (z generowaniem klatek)",
              "Automático (com geração de quadros)",
              "Otomatik (kare oluşturma ile)",
-             nullptr})
+             "Auto (with frame generation)"})
 BB_MENU_TEXT("On + Boost",
             {"ON + Boost",
              "Activé + Boost",
@@ -1683,7 +1683,7 @@ BB_MENU_TEXT("On + Boost",
              "Wł. + Boost",
              "Ligado + Boost",
              "Açık + Boost",
-             nullptr})
+             "On + Boost"})
 BB_MENU_TEXT("Low latency (NVIDIA Reflex)",
             {"低遅延 (NVIDIA Reflex)",
              "Faible latence (NVIDIA Reflex)",
@@ -1703,7 +1703,7 @@ BB_MENU_TEXT("Low latency (NVIDIA Reflex)",
              "Niskie opóźnienie (NVIDIA Reflex)",
              "Baixa latência (NVIDIA Reflex)",
              "Düşük gecikme (NVIDIA Reflex)",
-             nullptr})
+             "Low latency (NVIDIA Reflex)"})
 BB_MENU_TEXT("Low latency (AMD Anti-Lag 2)",
             {"低遅延 (AMD Anti-Lag 2)",
              "Faible latence (AMD Anti-Lag 2)",
@@ -1723,7 +1723,7 @@ BB_MENU_TEXT("Low latency (AMD Anti-Lag 2)",
              "Niskie opóźnienie (AMD Anti-Lag 2)",
              "Baixa latência (AMD Anti-Lag 2)",
              "Düşük gecikme (AMD Anti-Lag 2)",
-             nullptr})
+             "Low latency (AMD Anti-Lag 2)"})
 BB_MENU_TEXT("Low latency",
             {"低遅延",
              "Faible latence",
@@ -1743,7 +1743,7 @@ BB_MENU_TEXT("Low latency",
              "Niskie opóźnienie",
              "Baixa latência",
              "Düşük gecikme",
-             nullptr})
+             "Low latency"})
 BB_MENU_TEXT("Not offered by this graphics card's driver. NVIDIA Reflex needs a GeForce with VK_NV_low_latency2, AMD Anti-Lag 2 a Radeon with VK_AMD_anti_lag.",
             {"このグラフィックカードのドライバーは対応していません。NVIDIA Reflex には VK_NV_low_latency2 対応の GeForce、AMD Anti-Lag 2 には VK_AMD_anti_lag 対応の Radeon が必要です。",
              "Non proposé par le pilote de cette carte graphique. NVIDIA Reflex demande une GeForce avec VK_NV_low_latency2, AMD Anti-Lag 2 une Radeon avec VK_AMD_anti_lag.",
@@ -1763,7 +1763,7 @@ BB_MENU_TEXT("Not offered by this graphics card's driver. NVIDIA Reflex needs a 
              "Sterownik tej karty graficznej tego nie oferuje. NVIDIA Reflex wymaga GeForce z VK_NV_low_latency2, AMD Anti-Lag 2 wymaga Radeona z VK_AMD_anti_lag.",
              "O driver desta placa de vídeo não oferece isso. O NVIDIA Reflex precisa de uma GeForce com VK_NV_low_latency2, o AMD Anti-Lag 2 de uma Radeon com VK_AMD_anti_lag.",
              "Bu ekran kartının sürücüsü bunu sunmuyor. NVIDIA Reflex için VK_NV_low_latency2 destekli bir GeForce, AMD Anti-Lag 2 için VK_AMD_anti_lag destekli bir Radeon gerekir.",
-             nullptr})
+             "Not offered by this graphics card's driver. NVIDIA Reflex needs a GeForce with VK_NV_low_latency2, AMD Anti-Lag 2 a Radeon with VK_AMD_anti_lag."})
 BB_MENU_TEXT("The game starts each frame just in time for the graphics card instead of early, so what you press shows sooner. Auto: on with frame generation, which holds every frame back. Boost (NVIDIA only): keeps the graphics card's clocks up, using a little more power.",
             {"ゲームが各フレームを早めではなく、グラフィックカードにちょうど間に合うタイミングで始めるため、操作が画面に早く反映されます。自動: 各フレームを遅らせるフレーム生成と同時にON。Boost (NVIDIAのみ): グラフィックカードのクロックを高く保ちます。消費電力が少し増えます。",
              "Le jeu commence chaque image juste à temps pour la carte graphique au lieu d'en avance : ce que vous appuyez s'affiche plus tôt. Auto : activé avec la génération d'images, qui retient chaque image. Boost (NVIDIA uniquement) : garde les fréquences de la carte graphique élevées, pour un peu plus de consommation.",
@@ -1783,7 +1783,7 @@ BB_MENU_TEXT("The game starts each frame just in time for the graphics card inst
              "Gra zaczyna każdą klatkę dokładnie na czas dla karty graficznej zamiast z wyprzedzeniem, więc to, co naciskasz, widać szybciej. Auto: włączone z generowaniem klatek, które wstrzymuje każdą klatkę. Boost (tylko NVIDIA): utrzymuje wysokie taktowanie karty graficznej kosztem nieco większego poboru mocy.",
              "O jogo começa cada quadro na hora certa para a placa de vídeo, em vez de adiantado, e o que você aperta aparece antes na tela. Automático: ligado com a geração de quadros, que segura cada quadro. Boost (só NVIDIA): mantém as frequências da placa de vídeo altas, gastando um pouco mais de energia.",
              "Oyun her kareye erken değil, ekran kartı için tam zamanında başlar; bastığınız şey ekranda daha erken görünür. Otomatik: her kareyi bekleten kare oluşturma ile açık. Boost (yalnızca NVIDIA): ekran kartının saat hızlarını yüksek tutar, biraz daha fazla güç harcar.",
-             nullptr})
+             "The game starts each frame just in time for the graphics card instead of early, so what you press shows sooner. Auto: on with frame generation, which holds every frame back. Boost (NVIDIA only): keeps the graphics card's clocks up, using a little more power."})
 BB_MENU_TEXT("Game frame to display: %.1f ms (on)",
             {"ゲームのフレームから画面まで: %.1f ms (ON)",
              "De l'image du jeu à l'écran : %.1f ms (activé)",
@@ -1803,7 +1803,7 @@ BB_MENU_TEXT("Game frame to display: %.1f ms (on)",
              "Od klatki gry do ekranu: %.1f ms (wł.)",
              "Do quadro do jogo à tela: %.1f ms (ligado)",
              "Oyun karesinden ekrana: %.1f ms (açık)",
-             nullptr})
+             "Game frame to display: %.1f ms (on)"})
 BB_MENU_TEXT("Game frame to display: %.1f ms (off)",
             {"ゲームのフレームから画面まで: %.1f ms (OFF)",
              "De l'image du jeu à l'écran : %.1f ms (désactivé)",
@@ -1823,7 +1823,7 @@ BB_MENU_TEXT("Game frame to display: %.1f ms (off)",
              "Od klatki gry do ekranu: %.1f ms (wył.)",
              "Do quadro do jogo à tela: %.1f ms (desligado)",
              "Oyun karesinden ekrana: %.1f ms (kapalı)",
-             nullptr})
+             "Game frame to display: %.1f ms (off)"})
 BB_MENU_TEXT("DLSS model",
             {"DLSSモデル",
              "Modèle DLSS",
