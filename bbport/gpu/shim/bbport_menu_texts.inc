@@ -4043,7 +4043,7 @@ BB_MENU_TEXT("Invited",
              "Zaproszono",
              "Convidado",
              "Davet edildi",
-             nullptr})
+             "เชิญแล้ว"})
 BB_MENU_TEXT("Invite",
             {"招待する",
              "Inviter",
