@@ -2,8 +2,8 @@
 
 ## Add to Steam: off on Linux (since 1.4.0.1)
 
-**Status for 1.5.0.1 (playtest pre-release), as for 1.4.0.1:** the button stays off, so it cannot touch anyone's
-shortcuts; to be resolved (tested on a Deck and switched back on) before a full release.
+**Status for 1.5.0.4, as since 1.4.0.1:** the button stays off, so it cannot touch anyone's shortcuts; to be
+resolved (tested on a Deck and switched back on) later.
 
 **Status:** the launcher's Add to Steam button is disabled on Linux. Players add `run-game.sh` by hand
 (Steam > Games > Add a Non-Steam Game, file type All Files). README-Linux.txt says so.
@@ -34,12 +34,25 @@ every entry and is still `-rwxr-xr-x`, then start Steam and check the library. T
 `steam_button.configure(state='disabled')` block in `bbport_launcher_win.py` (Saves and shortcuts card) and
 the README note.
 
-## Joining a team: not yet tested on Linux (1.5.0.1)
+## 1.5.0.4: 1.5.0 with official 1.5.1's fixes that work beside 1.5.0 players
 
-Global sign-in, the server connection and the co-op code start on a Steam Deck (checked: the party HUD
-draws from the co-op code). Joining or hosting a team with another player has not succeeded yet in
-testing. Reports welcome: user/log/console.txt and user/log/shad_log.txt (bbport.ini coop_trace=1 for
-the full co-op log).
+The public server runs 1.5.0 and refuses a 1.5.1 game, so this build stays 1.5.0. On top of 1.5.0.3:
+waking in the Hunter's Dream after a host's world ahead of yours (BB_DREAM_AFTER_GUEST=0 switches it
+off), a teammate not yet placed never hidden, and from 1.5.1 (main 5cef8e0c): the guest stuck
+"loading", a guest's own progress kept (merged with this fork's own-world fixes as in 1.5.1.1), the
+Supermedo 1.9.8.5 crash fixes, GOTY 01.00 copies patched, zeroed vertex buffers, the travel lock fix,
+boss tempo, spectating a boss death beside a teammate, the not-signed-in note, the launcher's fixes,
+Thai. Left out: 1.5.1's shop stock flags (each player's own), since every game of a team must agree.
+1.5.0 teammates' logs note that this build differs (its patches): a note, not a refusal.
+
+Untested in play: the cloth fix at 30 FPS, waking in the Hunter's Dream, the unplaced teammate.
+Reports welcome: user/log/console.txt and user/log/shad_log.txt (bbport.ini coop_trace=1 for the
+full co-op log).
+
+## Launcher Output in Desktop Mode
+
+Under the Deck's desktop at 90% scaling the launcher can offer 1422 x 888 (the scaled desktop). Choose
+1280 x 800 (Steam Deck): the game then draws the Deck's own pixels and Light grid Auto applies.
 
 ## Frame rate in co-op
 
