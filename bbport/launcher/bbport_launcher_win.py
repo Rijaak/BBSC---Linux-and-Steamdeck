@@ -5306,6 +5306,12 @@ class Launcher:
             self.status.configure(text=_('Co-op could not start.', 'Кооператив не запустился.'), fg=BAD)
             self.messagebox.showerror('Bloodborne', failed)
             return
+        blocked = play_blocked_text()  # LINUX_FORK: one game at a time
+        if blocked:
+            self.set_running(False)
+            self.status.configure(text=blocked, fg=BAD)
+            self.messagebox.showwarning('Bloodborne', blocked)
+            return
         playing = (dict(settings), root)
         log_path = bbport_coop.rotate_logs(PORT_DIR)
         # Phase 11: a crash's dump and logs go to the host's server by themselves, alongside.
@@ -5319,6 +5325,7 @@ class Launcher:
         try:
             self.process = start_game(run_command(), env, log_path)
         except OSError as error:
+            bbport_linux_compat.release_play_lock()
             self.set_running(False)
             self.status.configure(text=_('Could not start: {}', 'Не удалось запустить: {}').format(error), fg=BAD)
             self.process = None
@@ -6592,6 +6599,11 @@ class Launcher:
                                                       'Выберите папку игры с eboot.bin (CUSA03173).'))
             self.show('general')
             return
+        blocked = play_blocked_text()  # LINUX_FORK: one game at a time
+        if blocked:
+            self.status.configure(text=blocked, fg=BAD)
+            self.messagebox.showwarning('Bloodborne', blocked)
+            return
         self.set_log('')
         log_path = Path(self.app.get('user_dir') or DATA_DIR / 'user') / 'last_run.log'
         env = game_environment(self.app)
@@ -6602,6 +6614,7 @@ class Launcher:
         try:
             self.process = start_game(run_command(), env, log_path)
         except OSError as error:
+            bbport_linux_compat.release_play_lock()
             self.append(_('Could not start: {}', 'Не удалось запустить: {}').format(error) + '\n')
             self.status.configure(text=_('Could not start: {}', 'Не удалось запустить: {}').format(error), fg=BAD)
             self.process = None
@@ -6644,6 +6657,7 @@ class Launcher:
                 if isinstance(item, tuple):
                     self.append(_('\n— the game exited (code {}) —\n', '\n— игра завершилась (код {}) —\n').format(item[0]))
                     self.process = None
+                    bbport_linux_compat.release_play_lock()  # LINUX_FORK: the next PLAY may start
                     if self.job:
                         self.job.close()
                     self.set_running(False)
@@ -7883,6 +7897,23 @@ def record_startup_failure(text):
     return None
 
 
+def play_blocked_text():
+    """LINUX_FORK (Rijaak 2026-11-17): why the game must not start now, or ''. Two games of one install
+    sign in as one player and knock each other off the server (bbport_linux_compat.play_blocked)."""
+    why = bbport_linux_compat.play_blocked(PORT_DIR, DATA_DIR)
+    if why == 'starting':
+        return _('The game is already starting or running from this folder. Wait for it, or close it first. '
+                 'A second copy would knock both off the co-op server.',
+                 'Игра уже запускается или работает из этой папки. Дождитесь её или сначала закройте. '
+                 'Вторая копия выбьет обе с сервера кооператива.')
+    if why == 'running':
+        return _('A game from this folder is still running or still closing. Close it first (Steam: Exit game), '
+                 'then start again. A second copy would knock both off the co-op server.',
+                 'Игра из этой папки ещё работает или закрывается. Сначала закройте её (Steam: «Выйти из игры»), '
+                 'затем запустите снова. Вторая копия выбьет обе с сервера кооператива.')
+    return ''
+
+
 def show_error_box(text):
     try:
         ctypes.windll.user32.MessageBoxW(None, text, COOP_NAME if COOP_INSTALL else 'Bloodborne', 0x10)  # MB_ICONERROR
@@ -7925,6 +7956,12 @@ def start_launcher():
     # Without a usable game folder there is nothing to play yet: open the launcher instead. The co-op
     # release plays co-op from Bloodborne.exe and Steam too (LeWhiske 2026-11-05: it started the plain
     # game, which could not reach the server); unfinished co-op settings open the launcher.
+    if '--play' in args and not IS_WINDOWS:  # LINUX_FORK: one game at a time
+        blocked = play_blocked_text()
+        if blocked:
+            record_startup_failure(blocked + '\n')
+            bbport_linux_compat.message_window(COOP_NAME if COOP_INSTALL else 'Bloodborne', blocked)
+            sys.exit(1)
     if '--play' in args and COOP_INSTALL:
         if bbport_coop.can_play_unattended(bbport_coop.load_settings(PORT_DIR)):
             sys.exit(play_coop_without_window(settings))

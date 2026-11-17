@@ -12,6 +12,8 @@ LINUX_KEYS = [
     'Add to Steam is off in the Linux build for now (README-Linux.txt: add run-game.sh by hand in Steam, Games > Add a Non-Steam Game).',
     'Opened the release page: download it there.',
     '"{}" is in your Steam library: {} added, {} updated (an existing shortcut of that name keeps its artwork and play time). It starts with the settings saved in this launcher. No other shortcut is changed, and shortcuts.vdf as it was is kept beside it as shortcuts.vdf.<date-time>.yt.bak.',
+    'The game is already starting or running from this folder. Wait for it, or close it first. A second copy would knock both off the co-op server.',
+    'A game from this folder is still running or still closing. Close it first (Steam: Exit game), then start again. A second copy would knock both off the co-op server.',
 ]
 
 LINUX = {
@@ -25,6 +27,8 @@ LINUX = {
         '«الإضافة إلى Steam» معطّلة حاليًا في نسخة Linux (README-Linux.txt: أضف run-game.sh يدويًا في Steam، الألعاب > إضافة لعبة غير تابعة لـ Steam).',
         'فُتحت صفحة الإصدار: نزّله من هناك.',
         '«{}» موجودة في مكتبة Steam: أُضيف {}، وحُدّث {} (الاختصار الموجود بهذا الاسم يحتفظ بصوره ووقت اللعب). تبدأ اللعبة بالإعدادات المحفوظة في هذا المشغّل. لا يتغيّر أي اختصار آخر، ويُحفظ shortcuts.vdf كما كان بجانبه باسم shortcuts.vdf.<date-time>.yt.bak.',
+        'اللعبة قيد البدء أو التشغيل بالفعل من هذا المجلد. انتظرها أو أغلقها أولاً. نسخة ثانية ستُخرج الاثنتين من خادم اللعب التعاوني.',
+        'ما زالت لعبة من هذا المجلد تعمل أو تُغلق. أغلقها أولاً (Steam: الخروج من اللعبة) ثم ابدأ من جديد. نسخة ثانية ستُخرج الاثنتين من خادم اللعب التعاوني.',
     ],
     'es': [
         'DLSS necesita {} en {}: faltan {} (build.sh los copia cuando DLSS_SDK_ROOT está definido). Mientras tanto se usa FSR 3.1.',
@@ -36,6 +40,8 @@ LINUX = {
         '«Añadir a Steam» está desactivado por ahora en la versión de Linux (README-Linux.txt: añade run-game.sh a mano en Steam, Juegos > Añadir un juego que no es de Steam).',
         'Se abrió la página de la versión: descárgala allí.',
         '«{}» está en tu biblioteca de Steam: {} añadidos, {} actualizados (un acceso directo existente con ese nombre conserva sus imágenes y su tiempo de juego). Se inicia con los ajustes guardados en este lanzador. No se cambia ningún otro acceso directo, y shortcuts.vdf tal como estaba se guarda al lado como shortcuts.vdf.<date-time>.yt.bak.',
+        'El juego ya se está iniciando o ejecutando desde esta carpeta. Espera o ciérralo primero. Una segunda copia expulsaría a ambas del servidor cooperativo.',
+        'Un juego de esta carpeta sigue en ejecución o se está cerrando. Ciérralo primero (Steam: Salir del juego) y vuelve a iniciar. Una segunda copia expulsaría a ambas del servidor cooperativo.',
     ],
     'pt': [
         'O DLSS precisa de {} em {}: faltam {} (o build.sh os copia quando DLSS_SDK_ROOT está definido). Até lá, o FSR 3.1 é usado.',
@@ -47,6 +53,8 @@ LINUX = {
         '«Adicionar ao Steam» está desativado por enquanto na versão para Linux (README-Linux.txt: adicione run-game.sh manualmente no Steam, Jogos > Adicionar um jogo não Steam).',
         'A página da versão foi aberta: baixe-a por lá.',
         '«{}» está na sua biblioteca Steam: {} adicionados, {} atualizados (um atalho existente com esse nome mantém as imagens e o tempo de jogo). Ele inicia com as configurações salvas neste launcher. Nenhum outro atalho é alterado, e o shortcuts.vdf como estava fica guardado ao lado como shortcuts.vdf.<date-time>.yt.bak.',
+        'O jogo já está a iniciar ou em execução a partir desta pasta. Aguarde ou feche-o primeiro. Uma segunda cópia derrubaria ambas do servidor cooperativo.',
+        'Um jogo desta pasta ainda está em execução ou a fechar. Feche-o primeiro (Steam: Sair do jogo) e inicie novamente. Uma segunda cópia derrubaria ambas do servidor cooperativo.',
     ],
     'fr': [
         'DLSS a besoin de {} dans {} : {} manquant(s) (build.sh les copie quand DLSS_SDK_ROOT est défini). En attendant, FSR 3.1 est utilisé.',
@@ -58,6 +66,8 @@ LINUX = {
         "« Ajouter à Steam » est désactivé pour l'instant dans la version Linux (README-Linux.txt : ajoutez run-game.sh à la main dans Steam, Jeux > Ajouter un jeu non Steam).",
         'Page de la version ouverte : téléchargez-la là-bas.',
         "« {} » est dans votre bibliothèque Steam : {} ajouté(s), {} mis à jour (un raccourci existant de ce nom garde ses images et son temps de jeu). Il démarre avec les réglages enregistrés dans ce lanceur. Aucun autre raccourci n'est modifié, et shortcuts.vdf tel qu'il était est conservé à côté sous le nom shortcuts.vdf.<date-time>.yt.bak.",
+        'Le jeu est déjà en cours de démarrage ou d’exécution depuis ce dossier. Attendez-le ou fermez-le d’abord. Une seconde copie ferait tomber les deux du serveur coop.',
+        'Un jeu de ce dossier est encore en cours d’exécution ou de fermeture. Fermez-le d’abord (Steam : Quitter le jeu), puis relancez. Une seconde copie ferait tomber les deux du serveur coop.',
     ],
     'de': [
         'DLSS braucht {} in {}: {} fehlen (build.sh kopiert sie, wenn DLSS_SDK_ROOT gesetzt ist). Bis dahin wird FSR 3.1 verwendet.',
@@ -69,6 +79,8 @@ LINUX = {
         '„Zu Steam hinzufügen“ ist in der Linux-Version vorerst abgeschaltet (README-Linux.txt: run-game.sh in Steam von Hand hinzufügen, Spiele > Steam-fremdes Spiel hinzufügen).',
         'Die Seite der Version wurde geöffnet: Lade sie dort herunter.',
         '„{}“ ist in deiner Steam-Bibliothek: {} hinzugefügt, {} aktualisiert (eine vorhandene Verknüpfung mit diesem Namen behält ihre Bilder und ihre Spielzeit). Das Spiel startet mit den in diesem Launcher gespeicherten Einstellungen. Keine andere Verknüpfung wird geändert, und shortcuts.vdf, wie es war, bleibt daneben als shortcuts.vdf.<date-time>.yt.bak erhalten.',
+        'Das Spiel startet oder läuft bereits aus diesem Ordner. Warte darauf oder schließe es zuerst. Eine zweite Kopie würde beide vom Koop-Server werfen.',
+        'Ein Spiel aus diesem Ordner läuft noch oder wird noch beendet. Schließe es zuerst (Steam: Spiel beenden) und starte dann erneut. Eine zweite Kopie würde beide vom Koop-Server werfen.',
     ],
     'it': [
         'DLSS richiede {} in {}: mancano {} (build.sh li copia quando DLSS_SDK_ROOT è impostato). Nel frattempo si usa FSR 3.1.',
@@ -80,6 +92,8 @@ LINUX = {
         '«Aggiungi a Steam» è disattivato per ora nella versione Linux (README-Linux.txt: aggiungi run-game.sh a mano in Steam, Giochi > Aggiungi un gioco non di Steam).',
         'Pagina della versione aperta: scaricala da lì.',
         "«{}» è nella tua libreria di Steam: {} aggiunti, {} aggiornati (un collegamento esistente con quel nome mantiene le immagini e il tempo di gioco). Si avvia con le impostazioni salvate in questo launcher. Nessun altro collegamento viene modificato, e shortcuts.vdf com'era viene conservato accanto come shortcuts.vdf.<date-time>.yt.bak.",
+        'Il gioco è già in avvio o in esecuzione da questa cartella. Attendi o chiudilo prima. Una seconda copia farebbe cadere entrambe dal server co-op.',
+        'Un gioco di questa cartella è ancora in esecuzione o in chiusura. Chiudilo prima (Steam: Esci dal gioco), poi riavvia. Una seconda copia farebbe cadere entrambe dal server co-op.',
     ],
     'pl': [
         'DLSS potrzebuje {} w {}: brakuje {} (build.sh kopiuje je, gdy ustawiono DLSS_SDK_ROOT). Do tego czasu używany jest FSR 3.1.',
@@ -91,6 +105,8 @@ LINUX = {
         '„Dodaj do Steam” jest na razie wyłączone w wersji na Linuksa (README-Linux.txt: dodaj run-game.sh ręcznie w Steam, Gry > Dodaj grę spoza Steam).',
         'Otwarto stronę wydania: pobierz je stamtąd.',
         '„{}” jest w twojej bibliotece Steam: dodano {}, zaktualizowano {} (istniejący skrót o tej nazwie zachowuje grafiki i czas gry). Gra uruchamia się z ustawieniami zapisanymi w tym launcherze. Żaden inny skrót się nie zmienia, a dotychczasowy shortcuts.vdf zostaje obok jako shortcuts.vdf.<date-time>.yt.bak.',
+        'Gra już się uruchamia lub działa z tego folderu. Poczekaj na nią albo najpierw ją zamknij. Druga kopia wyrzuciłaby obie z serwera kooperacji.',
+        'Gra z tego folderu nadal działa lub się zamyka. Najpierw ją zamknij (Steam: Zakończ grę), a potem uruchom ponownie. Druga kopia wyrzuciłaby obie z serwera kooperacji.',
     ],
     'tr': [
         'DLSS için {} dosyaları {} içinde gerekli: {} eksik (DLSS_SDK_ROOT ayarlıysa build.sh onları kopyalar). O zamana kadar FSR 3.1 kullanılır.',
@@ -102,6 +118,8 @@ LINUX = {
         "Linux sürümünde “Steam'e ekle” şimdilik kapalı (README-Linux.txt: run-game.sh dosyasını Steam'de elle ekleyin, Oyunlar > Steam Dışı Oyun Ekle).",
         'Sürüm sayfası açıldı: oradan indirin.',
         '“{}” Steam kitaplığınızda: {} eklendi, {} güncellendi (bu adı taşıyan mevcut kısayol görsellerini ve oyun süresini korur). Oyun bu başlatıcıda kayıtlı ayarlarla başlar. Başka hiçbir kısayol değişmez ve shortcuts.vdf dosyasının önceki hâli yanında shortcuts.vdf.<date-time>.yt.bak olarak saklanır.',
+        'Oyun bu klasörden zaten başlatılıyor veya çalışıyor. Bekleyin ya da önce kapatın. İkinci bir kopya ikisini de eşli oyun sunucusundan düşürür.',
+        'Bu klasörden bir oyun hâlâ çalışıyor veya kapanıyor. Önce onu kapatın (Steam: Oyundan çık), sonra yeniden başlatın. İkinci bir kopya ikisini de eşli oyun sunucusundan düşürür.',
     ],
     'zh': [
         'DLSS 需要 {}（位于 {}）：缺少 {}（设置了 DLSS_SDK_ROOT 时，build.sh 会复制它们）。在此之前使用 FSR 3.1。',
@@ -113,6 +131,8 @@ LINUX = {
         'Linux 版暂时关闭了“添加到 Steam”（README-Linux.txt：在 Steam 中手动添加 run-game.sh，游戏 > 添加非 Steam 游戏）。',
         '已打开发布页面：请在那里下载。',
         '“{}”已在你的 Steam 库中：新增 {} 个，更新 {} 个（已有的同名快捷方式会保留其图片和游戏时间）。游戏以本启动器保存的设置启动。其他快捷方式不会改动，原来的 shortcuts.vdf 会在旁边保存为 shortcuts.vdf.<date-time>.yt.bak。',
+        '此文件夹中的游戏已在启动或运行。请等待，或先将其关闭。再启动一个会让两个都从合作服务器掉线。',
+        '此文件夹中的游戏仍在运行或正在关闭。请先将其关闭（Steam：退出游戏），然后重新启动。再启动一个会让两个都从合作服务器掉线。',
     ],
     'ja': [
         'DLSS には {} が必要です（場所：{}）：{} が見つかりません（DLSS_SDK_ROOT を設定すると build.sh がコピーします）。それまでは FSR 3.1 を使います。',
@@ -124,6 +144,8 @@ LINUX = {
         'Linux 版では「Steam に追加」は今のところ無効です（README-Linux.txt：Steam の「ゲーム」>「非 Steam ゲームを追加」で run-game.sh を手動で追加してください）。',
         'リリースページを開きました。そこからダウンロードしてください。',
         '「{}」は Steam ライブラリにあります：追加 {} 件、更新 {} 件（同じ名前の既存のショートカットは、アートワークとプレイ時間をそのまま保ちます）。このランチャーに保存した設定で起動します。ほかのショートカットは変更されず、元の shortcuts.vdf は同じ場所に shortcuts.vdf.<date-time>.yt.bak として残ります。',
+        'このフォルダーのゲームはすでに起動中または実行中です。待つか、先に終了してください。2つ目を起動すると、どちらも協力サーバーから切断されます。',
+        'このフォルダーのゲームがまだ実行中または終了処理中です。先に終了し（Steam: ゲームを終了）、もう一度起動してください。2つ目を起動すると、どちらも協力サーバーから切断されます。',
     ],
     'ko': [
         'DLSS에는 {}가 필요합니다(위치: {}): {} 없음(DLSS_SDK_ROOT를 설정하면 build.sh가 복사합니다). 그때까지는 FSR 3.1을 사용합니다.',
@@ -135,6 +157,8 @@ LINUX = {
         "Linux 빌드에서는 'Steam에 추가'가 당분간 꺼져 있습니다(README-Linux.txt: Steam의 게임 > 비 Steam 게임 추가에서 run-game.sh를 직접 추가하세요).",
         '릴리스 페이지를 열었습니다. 거기서 내려받으세요.',
         '"{}"이(가) Steam 라이브러리에 있습니다: {}개 추가, {}개 업데이트(같은 이름의 기존 바로가기는 아트워크와 플레이 시간을 유지합니다). 이 런처에 저장된 설정으로 시작합니다. 다른 바로가기는 바뀌지 않으며, 이전 shortcuts.vdf는 옆에 shortcuts.vdf.<date-time>.yt.bak으로 보관됩니다.',
+        '이 폴더의 게임이 이미 시작 중이거나 실행 중입니다. 기다리거나 먼저 종료하세요. 두 번째로 실행하면 둘 다 협동 서버에서 끊깁니다.',
+        '이 폴더의 게임이 아직 실행 중이거나 종료 중입니다. 먼저 종료한 뒤(Steam: 게임 종료) 다시 시작하세요. 두 번째로 실행하면 둘 다 협동 서버에서 끊깁니다.',
     ],
     'th': [
         'DLSS ต้องใช้ {} ใน {}: ขาด {} (build.sh จะคัดลอกให้เมื่อตั้งค่า DLSS_SDK_ROOT) ระหว่างนี้จะใช้ FSR 3.1',
@@ -147,5 +171,7 @@ LINUX = {
         'Add to Steam is off in the Linux build for now (README-Linux.txt: add run-game.sh by hand in Steam, Games > Add a Non-Steam Game).',
         'Opened the release page: download it there.',
         '"{}" is in your Steam library: {} added, {} updated (an existing shortcut of that name keeps its artwork and play time). It starts with the settings saved in this launcher. No other shortcut is changed, and shortcuts.vdf as it was is kept beside it as shortcuts.vdf.<date-time>.yt.bak.',
+        'The game is already starting or running from this folder. Wait for it, or close it first. A second copy would knock both off the co-op server.',
+        'A game from this folder is still running or still closing. Close it first (Steam: Exit game), then start again. A second copy would knock both off the co-op server.',
     ],
 }

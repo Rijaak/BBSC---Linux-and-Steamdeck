@@ -77,6 +77,98 @@ def use_system_certificates():
         os.environ['SSL_CERT_DIR'] = '/etc/ssl/certs'
 
 
+# One game at a time (Rijaak 2026-11-17). Two games of one install sign in as the same player, and
+# the server keeps one session a player: each knocks the other off the server link every few
+# seconds (team buttons do nothing, "can't reach the co-op server", an exit that hangs). Seen on a
+# Steam Deck: two starts 3 s apart, each through its whole preparation, so a check for a running
+# game alone would miss it. The launcher that plays holds a lock for as long as it lives (the
+# kernel drops it when the process ends, however it ends), and a game still running or still
+# closing is looked for as well.
+_play_lock = None
+
+
+def take_play_lock(data_dir):
+    """True when this launcher now holds the install's play lock (or cannot tell); False when
+    another launcher of this install is starting or playing the game."""
+    global _play_lock
+    if IS_WINDOWS or _play_lock is not None:
+        return True
+    import fcntl
+    try:
+        folder = os.path.join(str(data_dir), 'user')
+        os.makedirs(folder, exist_ok=True)
+        handle = open(os.path.join(folder, 'play.lock'), 'w')
+    except OSError:
+        return True  # nowhere to keep the lock: never a reason not to play
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return False
+    _play_lock = handle
+    return True
+
+
+def release_play_lock():
+    global _play_lock
+    if _play_lock is not None:
+        try:
+            _play_lock.close()
+        except OSError:
+            pass
+        _play_lock = None
+
+
+def running_games(install, proc='/proc'):
+    """The pids of this install's game (bin/bb-probe) that are running or still closing."""
+    game = os.path.join(os.path.realpath(str(install)), 'bin', 'bb-probe')
+    pids = []
+    try:
+        entries = os.listdir(proc)
+    except OSError:
+        return pids
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            path = os.readlink(os.path.join(proc, entry, 'exe')).removesuffix(' (deleted)')
+        except OSError:
+            continue  # gone, or another user's
+        if os.path.realpath(path) == game:
+            pids.append(int(entry))
+    return pids
+
+
+def play_blocked(install, data_dir):
+    """'' when the game may start (this launcher holds the play lock from now on); else why not:
+    'starting' (another launcher is starting or playing it) or 'running' (a game is still there)."""
+    if IS_WINDOWS:
+        return ''
+    if not take_play_lock(data_dir):
+        return 'starting'
+    if running_games(install):
+        release_play_lock()
+        return 'running'
+    return ''
+
+
+def message_window(title, text, seconds=15):
+    """A small window with `text` that closes by itself: a start without a window (Steam's
+    shortcut) has nowhere else to say it. Never raises."""
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.title(title)
+        root.configure(bg='#14110f')
+        tk.Label(root, text=text, wraplength=560, justify='left', fg='#e6dcc8', bg='#14110f',
+                 font=('TkDefaultFont', 13), padx=28, pady=22).pack()
+        tk.Button(root, text='OK', command=root.destroy, padx=18, pady=4).pack(pady=(0, 18))
+        root.after(int(seconds * 1000), root.destroy)
+        root.mainloop()
+    except Exception:  # no display, no Tk: the log has the line
+        pass
+
+
 def install():
     if IS_WINDOWS:
         return
