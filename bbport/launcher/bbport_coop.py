@@ -1140,6 +1140,8 @@ def prepare(install, settings, say=print):
     manifest = events / 'manifest.json'
     if code != 0 or not manifest.is_file():
         raise RuntimeError(f'Making the co-op event files failed (log: {log}).')
+    if sys.platform == 'linux':  # LINUX_FORK: events_packer_current
+        (events / EVENTS_PACKER).write_text(events_packer() + '\n', encoding='utf-8')
     note = ''
     reference = install / 'event-reference.json'
     if reference.is_file():
@@ -1188,8 +1190,29 @@ def events_current(install):
     tool = Path(install) / 'tools' / 'party_boss_events.py'
     try:
         made = json.loads(manifest.read_text(encoding='utf-8'))
-        return made.get('tool_sha256') == file_sha256(tool)
+        return made.get('tool_sha256') == file_sha256(tool) and events_packer_current(install)
     except (OSError, ValueError):
+        return False
+
+
+# LINUX_FORK: the zlib that packed the event files. Linux builds 1.5.0.3 and 1.5.0.4 shipped the build
+# machine's zlib-ng, and the event files a Steam Deck made with them were not byte for byte the tested
+# ones (the same events; the log's "event files" fingerprint differed from the official build's). A
+# launcher with another zlib than the one that packed them makes them again.
+EVENTS_PACKER = 'packed-with.txt'
+
+
+def events_packer():
+    import zlib
+    return 'zlib ' + zlib.ZLIB_RUNTIME_VERSION
+
+
+def events_packer_current(install):
+    if sys.platform != 'linux':
+        return True
+    try:
+        return (Path(install) / 'event-patch' / EVENTS_PACKER).read_text(encoding='utf-8').strip() == events_packer()
+    except OSError:
         return False
 
 

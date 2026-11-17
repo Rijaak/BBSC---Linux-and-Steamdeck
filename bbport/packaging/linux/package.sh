@@ -53,6 +53,13 @@ cp -a out/pyi-dist/BLauncher/. "$stage/"
 # Tk's fonts come from the system's fontconfig: a bundled older one rejects a newer system's font
 # settings (SteamOS 3.7: a screenful of "Fontconfig warning" lines). Every desktop Linux has it.
 rm -f "$stage"/_internal/libfontconfig.so* "$stage"/_internal/libfreetype.so*
+# The launcher's zlib is the standard one, never the build machine's zlib-ng: the co-op event files
+# it makes must be byte for byte the official ones (packaging/linux/build-zlib.sh says why).
+bash packaging/linux/build-zlib.sh
+[[ -f $stage/_internal/libz.so.1 ]] || { echo 'the frozen launcher has no _internal/libz.so.1 to replace' >&2; exit 1; }
+install -m755 out/zlib/libz.so.1 "$stage/_internal/libz.so.1"
+packed=$("$stage/BLauncher" --script packaging/linux/zlib-check.py)
+[[ $packed == "1.3.2 ok" ]] || { echo "the packaged launcher's zlib is not the standard 1.3.2: $packed" >&2; exit 1; }
 
 # --- the game -----------------------------------------------------------------------------------
 install -m755 out/bb-probe out/bb-gpu-capabilities "$stage/bin/"

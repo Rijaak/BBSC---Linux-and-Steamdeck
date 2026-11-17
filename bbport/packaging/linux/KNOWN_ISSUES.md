@@ -2,7 +2,7 @@
 
 ## Add to Steam: off on Linux (since 1.4.0.1)
 
-**Status for 1.5.0.4, as since 1.4.0.1:** the button stays off, so it cannot touch anyone's shortcuts; to be
+**Status for 1.5.0.5, as since 1.4.0.1:** the button stays off, so it cannot touch anyone's shortcuts; to be
 resolved (tested on a Deck and switched back on) later.
 
 **Status:** the launcher's Add to Steam button is disabled on Linux. Players add `run-game.sh` by hand
@@ -33,6 +33,37 @@ Add to Steam with Steam closed, wait a few minutes (the scanner's loop), check `
 every entry and is still `-rwxr-xr-x`, then start Steam and check the library. Then remove the
 `steam_button.configure(state='disabled')` block in `bbport_launcher_win.py` (Saves and shortcuts card) and
 the README note.
+
+## 1.5.0.5: one game at a time, the standard zlib, Tutuzaooo's texture budget
+
+On top of 1.5.0.4:
+- **One game at a time.** 2026-11-16/17 on a Steam Deck two copies of the game ran from one install
+  (two starts three seconds apart; why is not known). Both signed in as the same player and knocked
+  each other off the co-op server: team buttons that did nothing, "can't reach the co-op server", an
+  exit that hung. The launcher now refuses a start while a copy from the same folder is starting,
+  running or still closing (user/play.lock and the running bin/bb-probe), with a message.
+- **The launcher's zlib is the standard one (1.3.2), built from source.** 1.5.0.3 and 1.5.0.4 shipped
+  the build machine's zlib-ng. On a Steam Deck the co-op event files those launchers made held the
+  same events but not the same bytes as the tested ones (event-reference.json), so the log's "event
+  files" fingerprint was 3281e92710cd5e06 where the official build's is 5027cc81d409f91b, and
+  teammates' logs noted the difference. The Deck's own Python with zlib 1.3.2 made all 18 files byte
+  for byte the tested ones. The launcher also makes the event files again once when another zlib
+  packed them (event-patch/packed-with.txt). Not reproduced on the build machine (zlib-ng packed
+  every test input like the standard zlib there), so the check is the Deck's log after updating.
+- Tutuzaooo's texture hotfix: texture memory from the driver's live budget on desktop graphics cards
+  (BB_GC_LIVE_BUDGET=0 for the old limits). A Steam Deck already worked this way.
+
+**Open: as a guest, enemies that will not die for up to a minute** (2026-11-17, 1.5.0.3 and 1.5.0.4,
+one partner on the official 1.5.0 build at 60 FPS). The session dropped about every 60 seconds
+("CSMultiPlayMan StopRequest from the game", leave, rejoin 2 to 3 seconds later); in between the
+host's damage and deaths stopped arriving for about 30 seconds while positions still came, and the
+kills were applied at the rejoin. Normal again after a few minutes, and after the partner left. Not
+caused by the event files (above). Cause unknown: it needs the partner's logs or a session with
+another partner. No fix in this build.
+
+**Open: one crash in the Hunter's Dream** at the Doll (channel blood echoes), outside a session,
+1.5.0.4: "Guest fault (signal 11) at guest offset 0xd3fa05, address 0x1", thread "FMOD nonblockin".
+Seen once. To tell whether 1.5.1's crash fixes are involved: BB_GAME_CRASH_FIXES=0 ./BLauncher --play.
 
 ## 1.5.0.4: 1.5.0 with official 1.5.1's fixes that work beside 1.5.0 players
 

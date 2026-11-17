@@ -664,6 +664,13 @@ class EventFilesTests(unittest.TestCase):
             self.assertFalse(coop.events_current(install), 'a manifest from before the hash')
             manifest.write_text(json.dumps({'tool_sha256': coop.file_sha256(tool), 'files': {}}),
                                 encoding='utf-8')
+            if sys.platform == 'linux':
+                # LINUX_FORK: and packed by this launcher's zlib (1.5.0.3 and 1.5.0.4 shipped zlib-ng).
+                self.assertFalse(coop.events_current(install), 'made before the packer was noted')
+                packer = install / 'event-patch' / coop.EVENTS_PACKER
+                packer.write_text('zlib 1.3.1.zlib-ng\n', encoding='utf-8')
+                self.assertEqual(coop.events_current(install), coop.events_packer() == 'zlib 1.3.1.zlib-ng')
+                packer.write_text(coop.events_packer() + '\n', encoding='utf-8')
             self.assertTrue(coop.events_current(install))
             tool.write_bytes(b'new patcher')
             self.assertFalse(coop.events_current(install))
